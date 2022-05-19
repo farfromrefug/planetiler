@@ -1,6 +1,8 @@
 package com.onthegomap.planetiler.collection;
 
 import com.carrotsearch.hppc.LongLongHashMap;
+import com.google.common.io.ByteArrayDataOutput;
+import com.google.common.io.ByteStreams;
 import com.onthegomap.planetiler.Profile;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
@@ -12,6 +14,7 @@ import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.CloseableConusmer;
 import com.onthegomap.planetiler.util.CommonStringEncoder;
 import com.onthegomap.planetiler.util.DiskBacked;
+import com.onthegomap.planetiler.util.Hashing;
 import com.onthegomap.planetiler.util.LayerStats;
 import java.io.Closeable;
 import java.io.IOException;
@@ -342,6 +345,23 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
     }
 
     /**
+     * Generates a hash over the feature's relevant data: layer, geometry, and attributes. The coordinates are
+     * <b>not</b> part of the hash.
+     * <p>
+     * Used as an optimization to avoid writing the same (ocean) tiles over and over again.
+     */
+    public int generateContentHash() {
+      ByteArrayDataOutput out = ByteStreams.newDataOutput();
+      for (var feature : entries) {
+        long layerId = extractLayerIdFromKey(feature.key());
+        out.writeLong(layerId);
+        out.write(feature.value());
+        out.writeBoolean(extractHasGroupFromKey(feature.key()));
+      }
+      return Hashing.fnv32(out.toByteArray());
+    }
+
+    /**
      * Returns true if {@code other} contains features with identical layer, geometry, and attributes, as this tile -
      * even if the tiles have separate coordinates.
      * <p>
@@ -362,6 +382,7 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
       }
       return true;
     }
+
 
     private VectorTile.Feature decodeVectorTileFeature(SortableFeature entry) {
       try (MessageUnpacker unpacker = MessagePack.newDefaultUnpacker(entry.value())) {
