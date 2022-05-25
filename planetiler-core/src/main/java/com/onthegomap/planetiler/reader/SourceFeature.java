@@ -7,6 +7,7 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Lineal;
@@ -41,6 +42,7 @@ public abstract class SourceFeature implements WithTags {
   private Geometry validPolygon = null;
   private double area = Double.NaN;
   private double length = Double.NaN;
+  private Envelope envelope = null;
 
   /**
    * Constructs a new input feature.
@@ -130,7 +132,7 @@ public abstract class SourceFeature implements WithTags {
   private Geometry computeCentroidIfConvex() throws GeometryException {
     if (!canBePolygon()) {
       return centroid();
-    } else if (polygon()instanceof Polygon poly &&
+    } else if (polygon() instanceof Polygon poly &&
       poly.getNumInteriorRing() == 0 &&
       GeoUtils.isConvex(poly.getExteriorRing())) {
       return centroid();
@@ -245,6 +247,13 @@ public abstract class SourceFeature implements WithTags {
   public double length() throws GeometryException {
     return Double.isNaN(length) ? (length =
       (isPoint() || canBePolygon() || canBeLine()) ? worldGeometry().getLength() : 0) : length;
+  }
+
+  /**
+   * Returns and caches the result of {@link Geometry#getEnvelopeInternal()} of this feature in world web mercator coordinates
+   */
+  public Envelope envelope() throws GeometryException {
+    return envelope == null ? (envelope = worldGeometry().getEnvelopeInternal()) : envelope;
   }
 
   /** Returns true if this feature can be interpreted as a {@link Point} or {@link MultiPoint}. */

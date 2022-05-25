@@ -59,6 +59,8 @@ import com.onthegomap.planetiler.util.Translations;
 import com.onthegomap.planetiler.util.ZoomFunction;
 import java.util.List;
 import java.util.Map;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Defines the logic for generating river map elements in the {@code waterway} layer from source features.
@@ -89,12 +91,12 @@ public class Waterway implements
   private static final Map<String, Integer> CLASS_MINZOOM = Map.of(
     "river", 12,
     "canal", 12,
-
-    "stream", 13,
+    "stream", 12,
     "drain", 13,
     "ditch", 13
   );
   private static final String TEMP_REL_ID_ADDR = "_relid";
+  private static final Logger LOGGER = LoggerFactory.getLogger(Waterway.class);
 
   private final Translations translations;
   private final PlanetilerConfig config;
@@ -194,9 +196,10 @@ public class Waterway implements
       .setAttr(Fields.CLASS, element.waterway())
       .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
       .setMinZoom(minzoom)
+      .setPixelToleranceFactor(0.5)
       // details only at higher zoom levels so that named rivers can be merged more aggressively
       .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
-      .setAttrWithMinzoom(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0, 12)
+      .setAttrWithMinzoom(Fields.INTERMITTENT, element.isIntermittent() ? 1 : null, 12)
       // at lower zoom levels, we'll merge linestrings and limit length/clip afterwards
       .setBufferPixelOverrides(MIN_PIXEL_LENGTHS).setMinPixelSizeBelowZoom(11, 0);
   }

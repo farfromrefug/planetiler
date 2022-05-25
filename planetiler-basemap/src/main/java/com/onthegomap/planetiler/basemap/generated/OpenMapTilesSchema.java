@@ -37,7 +37,10 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 
 package com.onthegomap.planetiler.basemap.generated;
 
-import static com.onthegomap.planetiler.expression.Expression.*;
+import static com.onthegomap.planetiler.expression.Expression.FALSE;
+import static com.onthegomap.planetiler.expression.Expression.and;
+import static com.onthegomap.planetiler.expression.Expression.matchAny;
+import static com.onthegomap.planetiler.expression.Expression.or;
 
 import com.onthegomap.planetiler.basemap.Layer;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
@@ -59,11 +62,12 @@ public class OpenMapTilesSchema {
   public static final String VERSION = "3.13.0";
   public static final String ATTRIBUTION =
     "<a href=\"https://www.openmaptiles.org/\" target=\"_blank\">&copy; OpenMapTiles</a> <a href=\"https://www.openstreetmap.org/copyright\" target=\"_blank\">&copy; OpenStreetMap contributors</a>";
-  public static final List<String> LANGUAGES = List.of("am", "ar", "az", "be", "bg", "br", "bs", "ca", "co", "cs", "cy",
-    "da", "de", "el", "en", "eo", "es", "et", "eu", "fi", "fr", "fy", "ga", "gd", "he", "hi", "hr", "hu", "hy", "id",
-    "is", "it", "ja", "ja_kana", "ja_rm", "ja-Latn", "ja-Hira", "ka", "kk", "kn", "ko", "ko-Latn", "ku", "la", "lb",
-    "lt", "lv", "mk", "mt", "ml", "nl", "no", "oc", "pl", "pt", "rm", "ro", "ru", "sk", "sl", "sq", "sr", "sr-Latn",
-    "sv", "ta", "te", "th", "tr", "uk", "zh");
+  // public static final List<String> LANGUAGES = List.of("am", "ar", "az", "be", "bg", "br", "bs", "ca", "co", "cs", "cy",
+  //   "da", "de", "el", "en", "eo", "es", "et", "eu", "fi", "fr", "fy", "ga", "gd", "he", "hi", "hr", "hu", "hy", "id",
+  //   "is", "it", "ja", "ja_kana", "ja_rm", "ja-Latn", "ja-Hira", "ka", "kk", "kn", "ko", "ko-Latn", "ku", "la", "lb",
+  //   "lt", "lv", "mk", "mt", "ml", "nl", "no", "oc", "pl", "pt", "rm", "ro", "ru", "sk", "sl", "sq", "sr", "sr-Latn",
+  //   "sv", "ta", "te", "th", "tr", "uk", "zh");
+    public static final List<String> LANGUAGES = List.of();
 
   /** Returns a list of expected layer implementation instances from the {@code layers} package. */
   public static List<Layer> createInstances(Translations translations, PlanetilerConfig config, Stats stats) {
@@ -71,18 +75,22 @@ public class OpenMapTilesSchema {
       new com.onthegomap.planetiler.basemap.layers.Water(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Waterway(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Landcover(translations, config, stats),
+      new com.onthegomap.planetiler.basemap.layers.LandcoverName(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Landuse(translations, config, stats),
+      new com.onthegomap.planetiler.basemap.layers.LanduseName(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.MountainPeak(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Park(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Boundary(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Aeroway(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Transportation(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Building(translations, config, stats),
+      new com.onthegomap.planetiler.basemap.layers.BuildingName(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.WaterName(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.TransportationName(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Place(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Housenumber(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.Poi(translations, config, stats),
+      new com.onthegomap.planetiler.basemap.layers.Route(translations, config, stats),
       new com.onthegomap.planetiler.basemap.layers.AerodromeLabel(translations, config, stats)
     );
   }
@@ -196,10 +204,6 @@ public class OpenMapTilesSchema {
        * <code>name</code> field may be empty for NaturalEarth data or at lower zoom levels.
        */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * The original value of the <a href="http://wiki.openstreetmap.org/wiki/Key:waterway"><code>waterway</code></a>
@@ -410,7 +414,16 @@ public class OpenMapTilesSchema {
             MultiExpression.entry("wetland",
               matchAny("subclass", "wetland", "bog", "swamp", "wet_meadow", "marsh", "reedbed", "saltern", "tidalflat",
                 "saltmarsh", "mangrove")),
-            MultiExpression.entry("sand", matchAny("subclass", "beach", "sand", "dune"))));
+            MultiExpression.entry("sand", matchAny("subclass", "beach", "sand", "dune")),
+            MultiExpression.entry("barrier", matchAny("subclass", "city_wall", "retaining_wall")),
+            MultiExpression.entry("historic", matchAny("subclass", "citywalls"))));
+
+      public static final MultiExpression<String> Subclass =
+        MultiExpression
+          .of(List.of(
+            MultiExpression.entry("wood",
+              matchAny("subclass", "forest", "wood")),
+            MultiExpression.entry("grass", matchAny("subclass", "grass", "meadow", "grassland"))));
     }
   }
   /**
@@ -515,7 +528,7 @@ public class OpenMapTilesSchema {
    * "https://github.com/openmaptiles/openmaptiles/blob/v3.13/layers/mountain_peak/mountain_peak.yaml">mountain_peak.yaml</a>
    */
   public interface MountainPeak extends Layer {
-    double BUFFER_SIZE = 64.0;
+    double BUFFER_SIZE = 8.0;
     String LAYER_NAME = "mountain_peak";
 
     @Override
@@ -527,10 +540,6 @@ public class OpenMapTilesSchema {
     final class Fields {
       /** The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the peak. */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * Use the <strong>class</strong> to differentiate between mountain peak and volcano.
@@ -610,18 +619,12 @@ public class OpenMapTilesSchema {
        * similarly assigned.
        */
       public static final String CLASS = "class";
+      public static final String SUBCLASS = "subclass";
       /**
        * The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the park (point
        * features only).
        */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code> (point features only). */
-      public static final String NAME_EN = "name_en";
-      /**
-       * German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code> (point
-       * features only).
-       */
-      public static final String NAME_DE = "name_de";
       /** Rank of the park within one tile, starting at 1 that is the most important park (point features only). */
       public static final String RANK = "rank";
     }
@@ -1111,29 +1114,53 @@ public class OpenMapTilesSchema {
           MultiExpression.entry("track", matchAny("highway", "track")),
           MultiExpression.entry("raceway", matchAny("highway", "raceway")),
           MultiExpression.entry("busway", matchAny("highway", "busway")),
-          MultiExpression.entry("motorway_construction",
+          MultiExpression.entry("motorway",
             and(matchAny("highway", "construction"), matchAny("construction", "motorway", "motorway_link"))),
-          MultiExpression.entry("trunk_construction",
+          MultiExpression.entry("trunk",
             and(matchAny("highway", "construction"), matchAny("construction", "trunk", "trunk_link"))),
-          MultiExpression.entry("primary_construction",
+          MultiExpression.entry("primary",
             and(matchAny("highway", "construction"), matchAny("construction", "primary", "primary_link"))),
-          MultiExpression.entry("secondary_construction",
+          MultiExpression.entry("secondary",
             and(matchAny("highway", "construction"), matchAny("construction", "secondary", "secondary_link"))),
-          MultiExpression.entry("tertiary_construction",
+          MultiExpression.entry("tertiary",
             and(matchAny("highway", "construction"), matchAny("construction", "tertiary", "tertiary_link"))),
           MultiExpression.entry(
-            "minor_construction",
+            "minor",
             and(matchAny("highway", "construction"),
               matchAny("construction", "", "unclassified", "residential", "living_street", "road"))),
-          MultiExpression.entry("path_construction", and(matchAny("highway", "construction"),
+          MultiExpression.entry("path", and(matchAny("highway", "construction"),
             or(matchAny("construction", "pedestrian", "path", "footway", "cycleway", "steps", "bridleway", "corridor"),
               matchAny("public_transport", "platform")))),
-          MultiExpression.entry("service_construction",
+          MultiExpression.entry("service",
             and(matchAny("highway", "construction"), matchAny("construction", "service"))),
-          MultiExpression.entry("track_construction",
+          MultiExpression.entry("track",
             and(matchAny("highway", "construction"), matchAny("construction", "track"))),
-          MultiExpression.entry("raceway_construction",
+          MultiExpression.entry("raceway",
             and(matchAny("highway", "construction"), matchAny("construction", "raceway")))));
+    }
+  }
+
+  public interface Route extends Layer {
+    double BUFFER_SIZE = 4.0;
+    String LAYER_NAME = "route";
+
+    @Override
+    default String name() {
+      return LAYER_NAME;
+    }
+
+    /** Attribute names for map elements in the transportation layer. */
+    final class Fields {
+      public static final String CLASS = "class";
+      // public static final String BRUNNEL = "brunnel";
+    }
+    /** Attribute values for map elements in the transportation layer. */
+    final class FieldValues {
+    }
+    /** Complex mappings to generate attribute values from OSM element tags in the transportation layer. */
+    final class FieldMappings {
+      // public static final MultiExpression<String> Class =
+        // MultiExpression.of(List.of(MultiExpression.entry("route", matchAny("bicycle", "hiking", "foot"))));
     }
   }
   /**
@@ -1183,6 +1210,85 @@ public class OpenMapTilesSchema {
 
     }
   }
+
+  public interface BuildingName extends Layer {
+    double BUFFER_SIZE = 4.0;
+    String LAYER_NAME = "building_name";
+
+    @Override
+    default String name() {
+      return LAYER_NAME;
+    }
+
+    /** Attribute names for map elements in the transportation_name layer. */
+    final class Fields {
+
+      public static final String NAME = "name";
+ 
+
+    }
+    /** Attribute values for map elements in the transportation_name layer. */
+    final class FieldValues {
+      
+    }
+    /** Complex mappings to generate attribute values from OSM element tags in the transportation_name layer. */
+    final class FieldMappings {
+
+    }
+  }
+  public interface LanduseName extends Layer {
+    double BUFFER_SIZE = 4.0;
+    String LAYER_NAME = "landuse_name";
+
+    @Override
+    default String name() {
+      return LAYER_NAME;
+    }
+
+    /** Attribute names for map elements in the transportation_name layer. */
+    final class Fields {
+
+      public static final String NAME = "name";
+      public static final String CLASS = "class";
+ 
+
+    }
+    /** Attribute values for map elements in the transportation_name layer. */
+    final class FieldValues {
+      
+    }
+    /** Complex mappings to generate attribute values from OSM element tags in the transportation_name layer. */
+    final class FieldMappings {
+
+    }
+  }
+  public interface LandcoverName extends Layer {
+    double BUFFER_SIZE = 4.0;
+    String LAYER_NAME = "landcover_name";
+
+    @Override
+    default String name() {
+      return LAYER_NAME;
+    }
+
+    /** Attribute names for map elements in the transportation_name layer. */
+    final class Fields {
+
+      public static final String NAME = "name";
+ 
+      public static final String CLASS = "class";
+
+      public static final String SUBCLASS = "subclass";
+    }
+    /** Attribute values for map elements in the transportation_name layer. */
+    final class FieldValues {
+      
+    }
+    /** Complex mappings to generate attribute values from OSM element tags in the transportation_name layer. */
+    final class FieldMappings {
+
+    }
+  }
   /**
    * Lake center lines for labelling lake bodies. This is based of the
    * <a href="https://github.com/lukasmartinelli/osm-lakelines">osm-lakelines</a> project which derives nice centerlines
@@ -1192,7 +1298,7 @@ public class OpenMapTilesSchema {
    * "https://github.com/openmaptiles/openmaptiles/blob/v3.13/layers/water_name/water_name.yaml">water_name.yaml</a>
    */
   public interface WaterName extends Layer {
-    double BUFFER_SIZE = 256.0;
+    double BUFFER_SIZE = 8.0;
     String LAYER_NAME = "water_name";
 
     @Override
@@ -1206,10 +1312,6 @@ public class OpenMapTilesSchema {
        * The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the water body.
        */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * At the moment only <code>lake</code> since no ocean parts are labelled. <em>Reserved for future use</em>.
@@ -1268,10 +1370,6 @@ public class OpenMapTilesSchema {
        * of the highway.
        */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
       /**
        * The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:ref"><code>ref</code></a> tag of the motorway or its
        * network.
@@ -1481,10 +1579,6 @@ public class OpenMapTilesSchema {
     final class Fields {
       /** The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the POI. */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * The <strong>capital</strong> field marks the <a href=
@@ -1613,10 +1707,6 @@ public class OpenMapTilesSchema {
     final class Fields {
       /** The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the POI. */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * More general classes of POIs. If there is no more general <code>class</code> for the <code>subclass</code> this
@@ -1752,6 +1842,7 @@ public class OpenMapTilesSchema {
       public static final String CLASS_CLOTHING_STORE = "clothing_store";
       public static final String CLASS_SWIMMING = "swimming";
       public static final String CLASS_CASTLE = "castle";
+      public static final String CLASS_PITCH = "pitch";
       public static final Set<String> CLASS_VALUES = Set.of("shop", "town_hall", "golf", "fast_food", "park", "bus",
         "railway", "aerialway", "entrance", "campsite", "laundry", "grocery", "library", "college", "lodging",
         "ice_cream", "post", "cafe", "school", "alcohol_shop", "bar", "harbor", "car", "hospital", "cemetery",
@@ -1828,10 +1919,6 @@ public class OpenMapTilesSchema {
     final class Fields {
       /** The OSM <a href="http://wiki.openstreetmap.org/wiki/Key:name"><code>name</code></a> value of the aerodrome. */
       public static final String NAME = "name";
-      /** English name <code>name:en</code> if available, otherwise <code>name</code>. */
-      public static final String NAME_EN = "name_en";
-      /** German name <code>name:de</code> if available, otherwise <code>name</code> or <code>name:en</code>. */
-      public static final String NAME_DE = "name_de";
 
       /**
        * Distinguish between more and less important aerodromes. Class is derived from the value of

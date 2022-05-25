@@ -229,9 +229,6 @@ public class Place implements
       var names = LanguageUtils.getNames(element.source().tags(), translations);
 
       if (country != null) {
-        if (nullOrEmpty(names.get(Fields.NAME_EN))) {
-          names.put(Fields.NAME_EN, country.name);
-        }
         rank = country.rank;
       }
 
@@ -258,9 +255,7 @@ public class Place implements
       NaturalEarthRegion state = states.getOnlyContaining(element.source().worldGeometry().getCentroid());
       if (state != null) {
         var names = LanguageUtils.getNames(element.source().tags(), translations);
-        if (nullOrEmpty(names.get(Fields.NAME_EN))) {
-          names.put(Fields.NAME_EN, state.name);
-        }
+
         int rank = Math.min(6, Math.max(1, state.rank));
 
         features.point(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
@@ -316,13 +311,11 @@ public class Place implements
         List<NaturalEarthPoint> neCities = cities.getWithin(point, CITY_JOIN_DISTANCE);
         String rawName = coalesce(element.name(), "");
         String name = coalesce(rawName, "").toLowerCase(Locale.ROOT);
-        String nameEn = coalesce(element.nameEn(), "").toLowerCase(Locale.ROOT);
         String normalizedName = StringUtils.stripAccents(rawName);
         String wikidata = element.source().getString("wikidata", "");
         for (var neCity : neCities) {
           if (wikidata.equals(neCity.wikidata) ||
             neCity.names.contains(name) ||
-            neCity.names.contains(nameEn) ||
             normalizedName.equals(neCity.name)) {
             rank = neCity.scaleRank <= 5 ? neCity.scaleRank + 1 : neCity.scaleRank;
             break;

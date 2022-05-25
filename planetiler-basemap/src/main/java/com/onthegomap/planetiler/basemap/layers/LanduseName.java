@@ -32,53 +32,75 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Design license: CC-BY 4.0
 
 See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for details on usage
- */
+*/
 package com.onthegomap.planetiler.basemap.layers;
-
-import static com.onthegomap.planetiler.basemap.util.Utils.nullIfEmpty;
-import static com.onthegomap.planetiler.basemap.util.Utils.nullIfString;
-import static com.onthegomap.planetiler.basemap.util.Utils.nullOrEmpty;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.basemap.util.LanguageUtils;
-import com.onthegomap.planetiler.basemap.util.Utils;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
-import com.onthegomap.planetiler.expression.MultiExpression;
+import com.onthegomap.planetiler.geo.GeoUtils;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
 
-/**
- * Defines the logic for generating map elements in the {@code aerodrome_label} layer from source features.
- * <p>
- * This class is ported to Java from
- * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/aerodrome_label">OpenMapTiles
- * aerodrome_layer sql files</a>.
- */
-public class AerodromeLabel implements
-  OpenMapTilesSchema.AerodromeLabel,
-  Tables.OsmAerodromeLabelPoint.Handler {
+public class LanduseName implements
+  OpenMapTilesSchema.LanduseName,
+  Tables.OsmLandusePolygon.Handler {
 
-  private final MultiExpression.Index<String> classLookup;
+  /*
+   * Generate building names from OSM data. 
+   */
+
+  private static final double WORLD_AREA_FOR_50K_SQUARE_METERS =
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(70_000)) / 256d, 2);
+  private static final double LOG2 = Math.log(2);
+
   private final Translations translations;
+  private final Stats stats;
 
-  public AerodromeLabel(Translations translations, PlanetilerConfig config, Stats stats) {
-    this.classLookup = FieldMappings.Class.index();
+  public LanduseName(Translations translations, PlanetilerConfig config, Stats stats) {
     this.translations = translations;
+    this.stats = stats;
+  }
+
+  private int getMinZoomForArea(double area) {
+    // sql filter:    area > 50000*2^(20-zoom_level)
+    // simplifies to: zoom_level > 20 - log(area / 50000) / log(2)
+    int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_50K_SQUARE_METERS) / LOG2);
+    minzoom = Math.min(14, Math.max(5, minzoom));
+    return minzoom;
   }
 
   @Override
-  public void process(Tables.OsmAerodromeLabelPoint element, FeatureCollector features) {
-    String clazz = classLookup.getOrElse(element.source(), FieldValues.CLASS_OTHER);
-    boolean important = !nullOrEmpty(element.iata()) && FieldValues.CLASS_INTERNATIONAL.equals(clazz);
-    features.centroid(LAYER_NAME)
-      .setBufferPixels(BUFFER_SIZE)
-      .setMinZoom(important ? 8 : 10)
-      .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
-      .putAttrs(Utils.elevationTags(element.ele()))
-      .setAttr(Fields.IATA, nullIfEmpty(element.iata()))
-      .setAttr(Fields.ICAO, nullIfEmpty(element.icao()))
-      .setAttr(Fields.CLASS, nullIfString(clazz, "other"));
+  public void process(Tables.OsmLandusePolygon element, FeatureCollector features) {
+    try {
+      String clazz = Landuse.getClass(element);
+      if (clazz != null &&
+        (clazz.equals("quarry") ||
+          clazz.equals("military") ||
+          clazz.equals("railway") ||
+          clazz.equals("commercial") ||
+          clazz.equals("industrial") ||
+          clazz.equals("retail") ||
+          clazz.equals("track") ||
+          clazz.equals("playground") ||
+          clazz.equals("dam") ||
+          clazz.equals("pedestrian")) &&
+        element.source().hasTag("name")) {
+
+        var names = LanguageUtils.getNames(element.source().tags(), translations);
+        double area = element.source().area();
+
+        features.pointOnSurface(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+          .setAttr(Fields.CLASS, clazz)
+          .putAttrs(names)
+          .setMinZoom(getMinZoomForArea(area));
+      }
+    } catch (GeometryException e) {
+      e.log(stats, "omt_landuse_poly",
+        "Unable to get area for OSM landuse polygon " + element.source().id());
+    }
   }
 }

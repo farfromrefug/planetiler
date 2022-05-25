@@ -37,6 +37,7 @@ package com.onthegomap.planetiler.basemap.layers;
 
 import static com.onthegomap.planetiler.basemap.util.Utils.elevationTags;
 import static com.onthegomap.planetiler.basemap.util.Utils.nullIfEmpty;
+import static com.onthegomap.planetiler.basemap.util.Utils.nullIfInt;
 
 import com.carrotsearch.hppc.LongIntMap;
 import com.onthegomap.planetiler.FeatureCollector;
@@ -48,6 +49,7 @@ import com.onthegomap.planetiler.basemap.util.LanguageUtils;
 import com.onthegomap.planetiler.collection.Hppc;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeometryException;
+import com.onthegomap.planetiler.geo.GeometryType;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
@@ -75,6 +77,7 @@ public class MountainPeak implements
   Tables.OsmPeakPoint.Handler,
   Tables.OsmMountainLinestring.Handler,
   BasemapProfile.FeaturePostProcessor {
+
 
   /*
    * Mountain peaks come from OpenStreetMap data and are ranked by importance (based on if they
@@ -114,14 +117,19 @@ public class MountainPeak implements
   @Override
   public void process(Tables.OsmPeakPoint element, FeatureCollector features) {
     Double meters = Parse.meters(element.ele());
-    if (meters != null && Math.abs(meters) < 10_000) {
+    if (element.source().hasTag("name") || (meters != null && Math.abs(meters) < 10_000)) {
+      var natural = element.source().getTag("natural");
       var feature = features.point(LAYER_NAME)
-        .setAttr(Fields.CLASS, element.source().getTag("natural"))
+        .setAttr(Fields.CLASS, natural)
+        .setAttr("wikipedia", nullIfEmpty(element.wikipedia()))
+        .setAttr("wikidata", nullIfEmpty((String)element.source().getTag("wikidata")))
+        .setAttr("summitcross", nullIfInt(element.summitcross() ? 1 : 0, 0))
         .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
         .putAttrs(elevationTags(meters))
         .setSortKeyDescending(
-          meters.intValue() +
-            (nullIfEmpty(element.wikipedia()) != null ? 10_000 : 0) +
+          (meters != null ? meters.intValue() : 0) +
+            // (nullIfEmpty(element.wikipedia()) != null ? 10_000 : 0) +
+            ("peak".equals(natural) ? 10_000 : 0) +
             (nullIfEmpty(element.name()) != null ? 10_000 : 0)
         )
         .setMinZoom(7)
@@ -129,27 +137,21 @@ public class MountainPeak implements
         // any label grid squares which could lead to inconsistent label ranks for a feature
         // in adjacent tiles. postProcess() will remove anything outside the desired buffer.
         .setBufferPixels(100)
-        .setPointLabelGridSizeAndLimit(13, 100, 5);
+        .setPointLabelGridSizeAndLimit(13, 100, 10);
 
-      if (peakInAreaUsingFeet(element)) {
-        feature.setAttr(Fields.CUSTOMARY_FT, 1);
-      }
+      // if (peakInAreaUsingFeet(element)) {
+      //   feature.setAttr(Fields.CUSTOMARY_FT, 1);
+      // }
     }
   }
 
   @Override
   public void process(Tables.OsmMountainLinestring element, FeatureCollector features) {
-    // TODO rank is approximate to sort important/named ridges before others, should switch to labelgrid for linestrings later
-    int rank = 3 -
-      (nullIfEmpty(element.wikipedia()) != null ? 1 : 0) -
-      (nullIfEmpty(element.name()) != null ? 1 : 0);
     features.line(LAYER_NAME)
       .setAttr(Fields.CLASS, element.source().getTag("natural"))
-      .setAttr(Fields.RANK, rank)
       .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
-      .setSortKey(rank)
       .setMinZoom(13)
-      .setBufferPixels(100);
+      .setBufferPixels(BUFFER_SIZE);
   }
 
   /** Returns true if {@code element} is a point in an area where feet are used insead of meters (the US). */
@@ -178,9 +180,10 @@ public class MountainPeak implements
       int gridrank = groupCounts.getOrDefault(feature.group(), 1);
       groupCounts.put(feature.group(), gridrank + 1);
       // now that we have accurate ranks, remove anything outside the desired buffer
-      if (!insideTileBuffer(feature)) {
+      if (!insideTileBuffer(feature) || (gridrank > 5 && zoom <= 13)) {
         items.set(i, null);
-      } else if (!feature.attrs().containsKey(Fields.RANK)) {
+        // we filter on "name" to kind of filter on points...
+      } else if (feature.geometry().geomType() == GeometryType.POINT && !feature.attrs().containsKey(Fields.RANK)) {
         feature.attrs().put(Fields.RANK, gridrank);
       }
     }

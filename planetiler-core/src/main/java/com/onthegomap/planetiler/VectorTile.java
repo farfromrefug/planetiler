@@ -483,9 +483,9 @@ public class VectorTile {
           .setType(feature.geometry().geomType().asProtobufType())
           .addAllGeometry(Ints.asList(feature.geometry().commands()));
 
-        if (feature.id >= 0) {
-          featureBuilder.setId(feature.id);
-        }
+        // if (feature.id >= 0) {
+        //   featureBuilder.setId(feature.id);
+        // }
 
         tileLayer.addFeatures(featureBuilder.build());
       }

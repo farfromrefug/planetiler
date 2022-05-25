@@ -36,6 +36,7 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 package com.onthegomap.planetiler.basemap.layers;
 
 import static com.onthegomap.planetiler.basemap.util.Utils.coalesce;
+import static com.onthegomap.planetiler.basemap.util.Utils.nullIfInt;
 import static com.onthegomap.planetiler.util.MemoryEstimator.CLASS_HEADER_BYTES;
 import static com.onthegomap.planetiler.util.Parse.parseDoubleOrNull;
 import static java.util.Map.entry;
@@ -107,7 +108,7 @@ public class Building implements
     this.mergeZ13Buildings = config.arguments().getBoolean(
       "building_merge_z13",
       "building layer: merge nearby buildings at z13",
-      true
+      false
     );
   }
 
@@ -160,12 +161,17 @@ public class Building implements
 
     if (renderHeight < 3660 && renderMinHeight < 3660) {
       var feature = features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-        .setMinZoom(13)
+        .setMinZoom(this.mergeZ13Buildings ? 13 : 14)
         .setMinPixelSize(2)
-        .setAttrWithMinzoom(Fields.RENDER_HEIGHT, renderHeight, 14)
-        .setAttrWithMinzoom(Fields.RENDER_MIN_HEIGHT, renderMinHeight, 14)
-        .setAttrWithMinzoom(Fields.COLOUR, color, 14)
+        .setAttrWithMinzoom(Fields.RENDER_HEIGHT, nullIfInt(renderHeight, 5), 14)
+        .setAttrWithMinzoom(Fields.RENDER_MIN_HEIGHT, nullIfInt(renderMinHeight, 0), 14)
+        // .setAttrWithMinzoom(Fields.COLOUR, color, 14)
         .setAttrWithMinzoom(Fields.HIDE_3D, hide3d, 14)
+        // .setAttrWithMinzoom("amenity", nullIfEmpty(element.amenity()), 14)
+        // .setAttrWithMinzoom("shop", nullIfEmpty(element.shop()), 14)
+        // .setAttrWithMinzoom("tourism", nullIfEmpty(element.tourism()), 14)
+        // .setAttrWithMinzoom("leisure", nullIfEmpty(element.leisure()), 14)
+        // .setAttrWithMinzoom("aerialway", nullIfEmpty(element.aerialway()), 14)
         .setSortKey(renderHeight);
       if (mergeZ13Buildings) {
         feature

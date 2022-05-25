@@ -65,6 +65,7 @@ public class Landcover implements
   OpenMapTilesSchema.Landcover,
   BasemapProfile.NaturalEarthProcessor,
   Tables.OsmLandcoverPolygon.Handler,
+  Tables.OsmLandcoverLinestring.Handler,
   BasemapProfile.FeaturePostProcessor {
 
   /*
@@ -77,22 +78,33 @@ public class Landcover implements
 
   public static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
     13, 8,
+    11, 6,
     10, 4,
-    9, 2
+    9, 0.1
+  ));
+  public static final ZoomFunction<Number> PIXEL_TOLERANCE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
+    10, 0.7,
+    9, 0.8,
+    8, 0.9,
+    7, 1
   ));
   private static final String TEMP_NUM_POINTS_ATTR = "_numpoints";
   private static final Set<String> WOOD_OR_FOREST = Set.of(
     FieldValues.SUBCLASS_WOOD,
     FieldValues.SUBCLASS_FOREST
   );
-  private final MultiExpression.Index<String> classMapping;
+  private static final MultiExpression.Index<String> classMapping = FieldMappings.Class.index();
+  private static final MultiExpression.Index<String> subclassMapping = FieldMappings.Subclass.index();
 
   public Landcover(Translations translations, PlanetilerConfig config, Stats stats) {
-    this.classMapping = FieldMappings.Class.index();
   }
 
-  private String getClassFromSubclass(String subclass) {
+  public static String getClassFromSubclass(String subclass) {
     return subclass == null ? null : classMapping.getOrElse(Map.of(Fields.SUBCLASS, subclass), null);
+  }
+
+  public static String getSubclassFromSubclass(String subclass) {
+    return subclass == null ? null : subclassMapping.getOrElse(Map.of(Fields.SUBCLASS, subclass), subclass);
   }
 
   @Override
@@ -112,7 +124,7 @@ public class Landcover implements
       if (clazz != null) {
         features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
           .setAttr(Fields.CLASS, clazz)
-          .setAttr(Fields.SUBCLASS, info.subclass)
+          .setAttr(Fields.SUBCLASS, getSubclassFromSubclass(info.subclass))
           .setZoomRange(info.minzoom, info.maxzoom);
       }
     }
@@ -122,13 +134,34 @@ public class Landcover implements
   public void process(Tables.OsmLandcoverPolygon element, FeatureCollector features) {
     String subclass = element.subclass();
     String clazz = getClassFromSubclass(subclass);
+    
     if (clazz != null) {
+      String subclazz = getSubclassFromSubclass(subclass);
       features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-        .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
+        // .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
+        // .setPixelToleranceOverrides(PIXEL_TOLERANCE_THRESHOLDS)
+        // .setPixelTolerance(tolerance)
+        .setSimplifyUsingVW(true)
+
+        .setPixelToleranceFactor(2.5)
+        .setMinPixelSizeFactor(1.8)
         .setAttr(Fields.CLASS, clazz)
-        .setAttr(Fields.SUBCLASS, subclass)
+        .setAttr(Fields.SUBCLASS, subclazz)
+        // .setAttr(Fields.SUBCLASS, clazz.equals(subclazz) ? null : subclazz)
         .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
         .setMinZoom(7);
+    }
+  }
+
+  @Override
+  public void process(Tables.OsmLandcoverLinestring element, FeatureCollector features) {
+    String subclass = element.subclass();
+    String clazz = getClassFromSubclass(subclass);
+    if (clazz != null) {
+      features.line(LAYER_NAME)
+        .setMinZoom(14)
+        .setAttr(Fields.CLASS, clazz)
+        .setAttr(Fields.SUBCLASS, getSubclassFromSubclass(subclass));
     }
   }
 
@@ -172,7 +205,7 @@ public class Landcover implements
           result.add(item);
         }
       }
-      var merged = FeatureMerge.mergeOverlappingPolygons(toMerge, 4);
+      var merged = FeatureMerge.mergeOverlappingPolygons(toMerge, 2);
       for (var item : merged) {
         item.attrs().remove(tempGroupKey);
       }

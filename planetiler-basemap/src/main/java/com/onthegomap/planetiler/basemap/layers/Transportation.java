@@ -61,6 +61,7 @@ import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
 import com.onthegomap.planetiler.util.ZoomFunction;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.List;
@@ -89,7 +90,7 @@ public class Transportation implements
   Tables.OsmAerialwayLinestring.Handler,
   Tables.OsmHighwayLinestring.Handler,
   Tables.OsmRailwayLinestring.Handler,
-  Tables.OsmShipwayLinestring.Handler,
+  Tables.OsmSkiLinestring.Handler,
   Tables.OsmHighwayPolygon.Handler,
   BasemapProfile.NaturalEarthProcessor,
   BasemapProfile.FeaturePostProcessor,
@@ -137,6 +138,10 @@ public class Transportation implements
   private static final Set<String> ACCESS_NO_VALUES = Set.of(
     "private", "no"
   );
+  private static final List<String> SAC_SCALE_VALUES =
+    Arrays.asList("hiking", "mountain_hiking", "demanding_mountain_hiking", "alpine_hiking", "demanding_alpine_hiking",
+      "difficult_alpine_hiking");
+  private static final List<String> TRACK_TYPE_VALUES = Arrays.asList("grade1", "grade2", "grade3", "grade4", "grade5");
   private static final ZoomFunction.MeterToPixelThresholds MIN_LENGTH = ZoomFunction.meterThresholds()
     .put(7, 50)
     .put(6, 100)
@@ -166,8 +171,8 @@ public class Transportation implements
     );
     MINZOOMS = Map.ofEntries(
       entry(FieldValues.CLASS_PATH, z13Paths ? 13 : 14),
-      entry(FieldValues.CLASS_TRACK, 14),
-      entry(FieldValues.CLASS_SERVICE, 13),
+      entry(FieldValues.CLASS_TRACK, 13),
+      entry(FieldValues.CLASS_SERVICE, 14),
       entry(FieldValues.CLASS_MINOR, 13),
       entry(FieldValues.CLASS_RACEWAY, 12),
       entry(FieldValues.CLASS_TERTIARY, 11),
@@ -197,9 +202,11 @@ public class Transportation implements
   }
 
   /** Returns a value for {@code surface} tag constrained to a small set of known values from raw OSM data. */
-  private static String surface(String value) {
-    return value == null ? null : SURFACE_PAVED_VALUES.contains(value) ? FieldValues.SURFACE_PAVED :
-      SURFACE_UNPAVED_VALUES.contains(value) ? FieldValues.SURFACE_UNPAVED : null;
+  private static String surface(String highwayClass, String value) {
+    if (FieldValues.CLASS_PATH.equals(highwayClass) || FieldValues.CLASS_TRACK.equals(highwayClass)) {
+      return value == null ? null : SURFACE_PAVED_VALUES.contains(value) ? FieldValues.SURFACE_PAVED : null;
+    }
+    return null;
   }
 
   /** Returns a value for {@code access} tag constrained to a small set of known values from raw OSM data. */
@@ -216,6 +223,14 @@ public class Transportation implements
     return value == null ? null :
       RAILWAY_RAIL_VALUES.contains(value) ? "rail" :
       RAILWAY_TRANSIT_VALUES.contains(value) ? "transit" : null;
+  }
+
+  private static int translateSacScale(String value) {
+    return SAC_SCALE_VALUES.indexOf(value);
+  }
+
+  private static int translateTrackType(String value) {
+    return TRACK_TYPE_VALUES.indexOf(value);
   }
 
   static String highwayClass(String highway, String publicTransport, String construction, String manMade) {
@@ -350,7 +365,7 @@ public class Transportation implements
     }
 
     RouteRelation routeRelation = getRouteRelation(element);
-    RouteNetwork networkType = routeRelation != null ? routeRelation.networkType : null;
+    // RouteNetwork networkType = routeRelation != null ? routeRelation.networkType : null;
 
     String highway = element.highway();
     String highwayClass = highwayClass(element.highway(), element.publicTransport(), element.construction(),
@@ -360,7 +375,8 @@ public class Transportation implements
       if (isPierPolygon(element)) {
         return;
       }
-      int minzoom = getMinzoom(element, highwayClass);
+      String subclass = highwaySubclass(highwayClass, element.publicTransport(), highway);
+      int minzoom = getMinzoom(element, highwayClass, subclass);
 
       boolean highwayRamp = isLink(highway);
       Integer rampAboveZ12 = (highwayRamp || element.isRamp()) ? 1 : null;
@@ -369,18 +385,21 @@ public class Transportation implements
       FeatureCollector.Feature feature = features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         // main attributes at all zoom levels (used for grouping <= z8)
         .setAttr(Fields.CLASS, highwayClass)
-        .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, element.publicTransport(), highway))
+        .setAttr(Fields.SUBCLASS, subclass)
         .setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()))
-        .setAttr(Fields.NETWORK, networkType != null ? networkType.name : null)
+        // .setAttr(Fields.NETWORK, networkType != null ? networkType.name : null)
         // z8+
-        .setAttrWithMinzoom(Fields.EXPRESSWAY, element.expressway() && !"motorway".equals(highway) ? 1 : null, 8)
+        // .setAttrWithMinzoom(Fields.EXPRESSWAY, element.expressway() && !"motorway".equals(highway) ? 1 : null, 8)
         // z9+
         .setAttrWithMinzoom(Fields.LAYER, nullIfLong(element.layer(), 0), 9)
-        .setAttrWithMinzoom(Fields.BICYCLE, nullIfEmpty(element.bicycle()), 9)
-        .setAttrWithMinzoom(Fields.FOOT, nullIfEmpty(element.foot()), 9)
-        .setAttrWithMinzoom(Fields.HORSE, nullIfEmpty(element.horse()), 9)
-        .setAttrWithMinzoom(Fields.MTB_SCALE, nullIfEmpty(element.mtbScale()), 9)
-        .setAttrWithMinzoom(Fields.ACCESS, access(element.access()), 9)
+        .setAttrWithMinzoom(Fields.BICYCLE, "yes".equals(element.bicycle()) ? 1 : null, 9)
+        .setAttrWithMinzoom(Fields.FOOT, "no".equals(element.foot()) ? 0 : null, 9)
+        // .setAttrWithMinzoom(Fields.HORSE, nullIfEmpty(element.horse()), 9)
+        // .setAttrWithMinzoom(Fields.MTB_SCALE, nullIfEmpty(element.mtbScale()), 9)
+        .setAttrWithMinzoom("sac_scale", nullIfInt(translateSacScale(element.sacScale()), -1), 8)
+        .setAttrWithMinzoom("tracktype",
+          nullIfInt(translateTrackType((String) element.source().getTag("tracktype")), -1), 9)
+        .setAttrWithMinzoom(Fields.ACCESS, "yes".equals(element.access()) ? 1 : null, 9)
         .setAttrWithMinzoom(Fields.TOLL, element.toll() ? 1 : null, 9)
         // sometimes z9+, sometimes z12+
         .setAttr(Fields.RAMP, minzoom >= 12 ? rampAboveZ12 :
@@ -388,8 +407,16 @@ public class Transportation implements
         // z12+
         .setAttrWithMinzoom(Fields.SERVICE, service, 12)
         .setAttrWithMinzoom(Fields.ONEWAY, nullIfInt(element.isOneway(), 0), 12)
-        .setAttrWithMinzoom(Fields.SURFACE, surface(element.surface()), 12)
+        .setAttrWithMinzoom("construction",
+          ((element.highway() != null && element.highway().equals("construction")) ||
+            nullIfEmpty(element.construction()) != null ? 1 : null),
+          12)
+        .setAttrWithMinzoom(Fields.SURFACE, surface(highwayClass, element.surface()), 12)
         .setMinPixelSize(0) // merge during post-processing, then limit by size
+        // .setPixelToleranceFactor(1.6)
+
+        .setPixelTolerance(0)
+        // .setMinPixelSizeFactor(0.2)
         .setSortKey(element.zOrder())
         .setMinZoom(minzoom);
 
@@ -401,7 +428,7 @@ public class Transportation implements
     }
   }
 
-  int getMinzoom(Tables.OsmHighwayLinestring element, String highwayClass) {
+  int getMinzoom(Tables.OsmHighwayLinestring element, String highwayClass, String subclass) {
     List<RouteRelation> routeRelations = getRouteRelations(element);
     int routeRank = 3;
     for (var rel : routeRelations) {
@@ -418,10 +445,14 @@ public class Transportation implements
       minzoom = 12;
     } else {
       String baseClass = highwayClass.replace("_construction", "");
+      String surface = surface(highwayClass, element.surface());
       minzoom = switch (baseClass) {
-        case FieldValues.CLASS_SERVICE -> isDrivewayOrParkingAisle(service(element.service())) ? 14 : 13;
-        case FieldValues.CLASS_TRACK, FieldValues.CLASS_PATH -> routeRank == 1 ? 12 :
-          (z13Paths || !nullOrEmpty(element.name()) || routeRank <= 2 || !nullOrEmpty(element.sacScale())) ? 13 : 14;
+        // case FieldValues.CLASS_SERVICE -> isDrivewayOrParkingAisle(service(element.service())) ? 14 : 13;
+        case FieldValues.CLASS_TRACK -> 13;
+        case FieldValues.CLASS_PATH -> (z13Paths || routeRank <= 2 ||
+          !(surface == null || FieldValues.SURFACE_PAVED.equals(surface)) ||
+          !nullOrEmpty(element.sacScale())) && !"footway".equals(subclass)? 13 :
+            14;
         default -> MINZOOMS.get(baseClass);
       };
     }
@@ -435,7 +466,7 @@ public class Transportation implements
   private boolean isPierPolygon(Tables.OsmHighwayLinestring element) {
     if ("pier".equals(element.manMade())) {
       try {
-        if (element.source().worldGeometry()instanceof LineString lineString && lineString.isClosed()) {
+        if (element.source().worldGeometry() instanceof LineString lineString && lineString.isClosed()) {
           // ignore this because it's a polygon
           return true;
         }
@@ -495,19 +526,31 @@ public class Transportation implements
       .setMinZoom(12);
   }
 
+  // @Override
+  // public void process(Tables.OsmShipwayLinestring element, FeatureCollector features) {
+  //   features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+  //     .setAttr(Fields.CLASS, element.shipway()) // "ferry"
+  //     // no subclass
+  //     .setAttr(Fields.SERVICE, service(element.service()))
+  //     .setAttr(Fields.ONEWAY, nullIfInt(element.isOneway(), 0))
+  //     .setAttr(Fields.RAMP, element.isRamp() ? 1L : null)
+  //     .setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()))
+  //     .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
+  //     .setSortKey(element.zOrder())
+  //     .setMinPixelSize(0) // merge during post-processing, then limit by size
+  //     .setMinZoom(11);
+  // }
   @Override
-  public void process(Tables.OsmShipwayLinestring element, FeatureCollector features) {
+  public void process(Tables.OsmSkiLinestring element, FeatureCollector features) {
     features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-      .setAttr(Fields.CLASS, element.shipway()) // "ferry"
+      .setAttr(Fields.CLASS, "piste")
       // no subclass
-      .setAttr(Fields.SERVICE, service(element.service()))
-      .setAttr(Fields.ONEWAY, nullIfInt(element.isOneway(), 0))
-      .setAttr(Fields.RAMP, element.isRamp() ? 1L : null)
-      .setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()))
+      .setAttr("difficulty", nullIfEmpty(element.difficulty()))
+      .setAttr("type", nullIfEmpty(element.pisteType()))
       .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
       .setSortKey(element.zOrder())
       .setMinPixelSize(0) // merge during post-processing, then limit by size
-      .setMinZoom(11);
+      .setMinZoom(14);
   }
 
   @Override
@@ -532,7 +575,7 @@ public class Transportation implements
 
   @Override
   public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) {
-    double tolerance = config.tolerance(zoom);
+    double tolerance = config.tolerance(zoom) * 0.8;
     double minLength = coalesce(MIN_LENGTH.apply(zoom), 0).doubleValue();
     // TODO preserve direction for one-way?
     return FeatureMerge.mergeLineStrings(items, minLength, tolerance, BUFFER_SIZE);

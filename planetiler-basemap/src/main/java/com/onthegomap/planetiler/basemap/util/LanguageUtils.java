@@ -134,14 +134,14 @@ public class LanguageUtils {
     Map<String, Object> result = new HashMap<>();
 
     String name = string(tags.get("name"));
-    String intName = string(tags.get("int_name"));
-    String nameEn = string(tags.get("name:en"));
-    String nameDe = string(tags.get("name:de"));
+    // String intName = string(tags.get("int_name"));
+    // String nameEn = string(tags.get("name:en"));
+    // String nameDe = string(tags.get("name:de"));
 
     boolean isLatin = containsOnlyLatinCharacters(name);
     String latin = isLatin ? name :
       Stream
-        .concat(Stream.of(nameEn, intName, nameDe), getAllNameTranslationsBesidesEnglishAndGerman(tags))
+        .concat(Stream.of(), getAllNameTranslationsBesidesEnglishAndGerman(tags))
         .filter(LanguageUtils::containsOnlyLatinCharacters)
         .findFirst().orElse(null);
     if (latin == null && translations != null && translations.getShouldTransliterate()) {
@@ -153,16 +153,16 @@ public class LanguageUtils {
     }
 
     putIfNotEmpty(result, "name", name);
-    putIfNotEmpty(result, "name_en", coalesce(nameEn, name));
-    putIfNotEmpty(result, "name_de", coalesce(nameDe, name, nameEn));
-    putIfNotEmpty(result, "name:latin", latin);
-    putIfNotEmpty(result, "name:nonlatin", nonLatin);
-    putIfNotEmpty(result, "name_int", coalesce(
-      intName,
-      nameEn,
-      latin,
-      name
-    ));
+    // putIfNotEmpty(result, "name_en", coalesce(nameEn, name));
+    // putIfNotEmpty(result, "name_de", coalesce(nameDe, name, nameEn));
+    // putIfNotEmpty(result, "name:latin", latin);
+    // putIfNotEmpty(result, "name:nonlatin", nonLatin);
+    // putIfNotEmpty(result, "name_int", coalesce(
+    //   intName,
+    //   nameEn,
+    //   latin,
+    //   name
+    // ));
 
     if (translations != null) {
       translations.addTranslations(result, tags);

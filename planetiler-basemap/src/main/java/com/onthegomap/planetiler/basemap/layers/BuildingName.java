@@ -32,53 +32,50 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 Design license: CC-BY 4.0
 
 See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for details on usage
- */
+*/
 package com.onthegomap.planetiler.basemap.layers;
-
-import static com.onthegomap.planetiler.basemap.util.Utils.nullIfEmpty;
-import static com.onthegomap.planetiler.basemap.util.Utils.nullIfString;
-import static com.onthegomap.planetiler.basemap.util.Utils.nullOrEmpty;
 
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.basemap.util.LanguageUtils;
-import com.onthegomap.planetiler.basemap.util.Utils;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
-import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
+import java.util.Set;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
-/**
- * Defines the logic for generating map elements in the {@code aerodrome_label} layer from source features.
- * <p>
- * This class is ported to Java from
- * <a href="https://github.com/openmaptiles/openmaptiles/tree/master/layers/aerodrome_label">OpenMapTiles
- * aerodrome_layer sql files</a>.
- */
-public class AerodromeLabel implements
-  OpenMapTilesSchema.AerodromeLabel,
-  Tables.OsmAerodromeLabelPoint.Handler {
+public class BuildingName implements
+  OpenMapTilesSchema.BuildingName,
+  Tables.OsmBuildingPolygon.Handler {
+  private static final Logger LOGGER = LoggerFactory.getLogger(BuildingName.class);
+  private static final Set<String> FILTERED_BUILDINGS =
+    Set.of("industrial", "commercial", "government", "civic", "hospital", "public", "military", "retail", "apartments", "office");
+  /*
+  * Generate building names from OSM data. 
+  */
 
-  private final MultiExpression.Index<String> classLookup;
   private final Translations translations;
 
-  public AerodromeLabel(Translations translations, PlanetilerConfig config, Stats stats) {
-    this.classLookup = FieldMappings.Class.index();
+  public BuildingName(Translations translations, PlanetilerConfig config, Stats stats) {
     this.translations = translations;
+    LOGGER.info("BuildingName");
   }
 
   @Override
-  public void process(Tables.OsmAerodromeLabelPoint element, FeatureCollector features) {
-    String clazz = classLookup.getOrElse(element.source(), FieldValues.CLASS_OTHER);
-    boolean important = !nullOrEmpty(element.iata()) && FieldValues.CLASS_INTERNATIONAL.equals(clazz);
-    features.centroid(LAYER_NAME)
-      .setBufferPixels(BUFFER_SIZE)
-      .setMinZoom(important ? 8 : 10)
-      .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
-      .putAttrs(Utils.elevationTags(element.ele()))
-      .setAttr(Fields.IATA, nullIfEmpty(element.iata()))
-      .setAttr(Fields.ICAO, nullIfEmpty(element.icao()))
-      .setAttr(Fields.CLASS, nullIfString(clazz, "other"));
+  public void process(Tables.OsmBuildingPolygon element, FeatureCollector features) {
+    if (element.source().hasTag("name") &&
+      !element.source().hasTag("amenity") &&
+      !element.source().hasTag("shop") &&
+      !element.source().hasTag("tourism") &&
+      !element.source().hasTag("leisure") &&
+      !element.source().hasTag("aerialway") &&
+      (element.source().hasTag("building") && FILTERED_BUILDINGS.contains(element.source().getString("building")))) {
+      var names = LanguageUtils.getNames(element.source().tags(), translations);
+      features.pointOnSurface(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .putAttrs(names)
+        .setMinZoom(14);
+    }
   }
 }

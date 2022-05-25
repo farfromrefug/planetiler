@@ -219,12 +219,16 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
 
     // TODO better API for default value, value at max zoom, and zoom-specific overrides for tolerance and min size?
     private double defaultMinPixelSize = config.minFeatureSizeBelowMaxZoom();
+    private double defaultMinPixelSizeFactor = 1.0;
     private double minPixelSizeAtMaxZoom = config.minFeatureSizeAtMaxZoom();
     private ZoomFunction<Number> minPixelSize = null;
 
     private double defaultPixelTolerance = config.simplifyToleranceBelowMaxZoom();
+    private double defaultPixelToleranceFactor = 1.0;
     private double pixelToleranceAtMaxZoom = config.simplifyToleranceAtMaxZoom();
     private ZoomFunction<Number> pixelTolerance = null;
+
+    private boolean simplifyUsingVW = false;
 
     private String numPointsAttr = null;
 
@@ -368,7 +372,7 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public double getMinPixelSizeAtZoom(int zoom) {
       return zoom == config.maxzoom() ? minPixelSizeAtMaxZoom :
-        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize);
+        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize * defaultMinPixelSizeFactor);
     }
 
     /**
@@ -381,6 +385,14 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public Feature setMinPixelSize(double minPixelSize) {
       this.defaultMinPixelSize = minPixelSize;
+      return this;
+    }
+
+    /**
+     * multiply factor applied to defaultMinPixelSize
+     */
+    public Feature setMinPixelSizeFactor(double factor) {
+      this.defaultMinPixelSizeFactor = factor;
       return this;
     }
 
@@ -444,7 +456,7 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public double getPixelToleranceAtZoom(int zoom) {
       return zoom == config.maxzoom() ? pixelToleranceAtMaxZoom :
-        ZoomFunction.applyAsDoubleOrElse(pixelTolerance, zoom, defaultPixelTolerance);
+        ZoomFunction.applyAsDoubleOrElse(pixelTolerance, zoom, defaultPixelTolerance * defaultPixelToleranceFactor);
     }
 
     /**
@@ -457,6 +469,15 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public Feature setPixelTolerance(double tolerance) {
       this.defaultPixelTolerance = tolerance;
+      return this;
+    }
+
+
+    /**
+     * multiply factor applied to defaultPixelTolerance
+     */
+    public Feature setPixelToleranceFactor(double factor) {
+      this.defaultPixelToleranceFactor = factor;
       return this;
     }
 
@@ -725,6 +746,14 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
         ", geom=" + geom.getGeometryType() +
         ", attrs=" + attrs +
         '}';
+    }
+
+    public Feature setSimplifyUsingVW(boolean value) {
+      this.simplifyUsingVW = value;
+      return this;
+    }
+    public boolean getSimplifyUsingVW() {
+      return this.simplifyUsingVW;
     }
   }
 }

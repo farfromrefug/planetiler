@@ -31,6 +31,7 @@ import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequence;
 import org.locationtech.jts.geom.util.AffineTransformation;
+import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -181,7 +182,12 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
       // TODO potential optimization: iteratively simplify z+1 to get z instead of starting with original geom each time
       // simplify only takes 4-5 minutes of wall time when generating the planet though, so not a big deal
       Geometry geom = AffineTransformation.scaleInstance(scale, scale).transform(input);
-      geom = DouglasPeuckerSimplifier.simplify(geom, tolerance);
+      boolean simplifyUsingVW = feature.getSimplifyUsingVW();
+      if (simplifyUsingVW) {
+        geom = VWSimplifier.simplify(geom, tolerance);
+      } else {
+        geom = DouglasPeuckerSimplifier.simplify(geom, tolerance);
+      }
 
       List<List<CoordinateSequence>> groups = GeometryCoordinateSequences.extractGroups(geom, minSize);
       double buffer = feature.getBufferPixelsAtZoom(z) / 256;

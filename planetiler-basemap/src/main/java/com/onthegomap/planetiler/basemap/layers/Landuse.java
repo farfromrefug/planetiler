@@ -81,30 +81,41 @@ public class Landuse implements
   public void processNaturalEarth(String table, SourceFeature feature, FeatureCollector features) {
     if ("ne_50m_urban_areas".equals(table)) {
       Double scalerank = Parse.parseDoubleOrNull(feature.getTag("scalerank"));
-      if (scalerank != null && scalerank <= 2) {
-        features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-          .setAttr(Fields.CLASS, FieldValues.CLASS_RESIDENTIAL)
-          .setZoomRange(4, 5);
-      }
+      // if (scalerank != null && scalerank <= 2) {
+      features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+        .setAttr(Fields.CLASS, FieldValues.CLASS_RESIDENTIAL)
+        .setZoomRange(scalerank != null && scalerank <= 2 ? 4 : 5, 5);
+      // }
     }
   }
 
-  @Override
-  public void process(Tables.OsmLandusePolygon element, FeatureCollector features) {
+  public static String getClass(Tables.OsmLandusePolygon element) {
     String clazz = coalesce(
       nullIfEmpty(element.landuse()),
       nullIfEmpty(element.amenity()),
       nullIfEmpty(element.leisure()),
       nullIfEmpty(element.tourism()),
       nullIfEmpty(element.place()),
-      nullIfEmpty(element.waterway())
+      nullIfEmpty(element.waterway()),
+      nullIfEmpty(element.highway())
     );
     if (clazz != null) {
       if ("grave_yard".equals(clazz)) {
         clazz = FieldValues.CLASS_CEMETERY;
       }
+    }
+    return clazz;
+  }
+
+  @Override
+  public void process(Tables.OsmLandusePolygon element, FeatureCollector features) {
+    String clazz = getClass(element);
+    if (clazz != null) {
       features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         .setAttr(Fields.CLASS, clazz)
+        .setSimplifyUsingVW(true)
+        .setPixelToleranceFactor(2.2)
+        // .setMinPixelSizeFactor(2.5)
         .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
         .setMinZoom(Z6_CLASSES.contains(clazz) ? 6 : 9);
     }

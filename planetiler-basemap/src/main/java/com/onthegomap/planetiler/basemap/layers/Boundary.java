@@ -167,12 +167,12 @@ public class Boundary implements
       case "ne_50m_admin_0_boundary_lines_land" -> new BoundaryInfo(2, 1, 3);
       case "ne_10m_admin_0_boundary_lines_land" -> feature.hasTag("featurecla", "Lease Limit") ? null :
         new BoundaryInfo(2, 4, 4);
-      case "ne_10m_admin_1_states_provinces_lines" -> {
-        Double minZoom = Parse.parseDoubleOrNull(feature.getTag("min_zoom"));
-        yield minZoom != null && minZoom <= 7 ? new BoundaryInfo(4, 1, 4) :
-          minZoom != null && minZoom <= 7.7 ? new BoundaryInfo(4, 4, 4) :
-          null;
-      }
+      // case "ne_10m_admin_1_states_provinces_lines" -> {
+      //   Double minZoom = Parse.parseDoubleOrNull(feature.getTag("min_zoom"));
+      //   yield minZoom != null && minZoom <= 7 ? new BoundaryInfo(4, 1, 4) :
+      //     minZoom != null && minZoom <= 7.7 ? new BoundaryInfo(4, 4, 4) :
+      //     null;
+      // }
       default -> null;
     };
     if (info != null) {
@@ -180,8 +180,8 @@ public class Boundary implements
         .setZoomRange(info.minzoom, info.maxzoom)
         .setMinPixelSizeAtAllZooms(0)
         .setAttr(Fields.ADMIN_LEVEL, info.adminLevel)
-        .setAttr(Fields.MARITIME, 0)
-        .setAttr(Fields.DISPUTED, disputed ? 1 : 0);
+        // .setAttr(Fields.MARITIME, 0)
+        .setAttr(Fields.DISPUTED, disputed ? 1 : null);
     }
   }
 
@@ -192,7 +192,7 @@ public class Boundary implements
       relation.hasTag("boundary", "administrative")) {
       Integer adminLevelValue = Parse.parseRoundInt(relation.getTag("admin_level"));
       String code = relation.getString("ISO3166-1:alpha3");
-      if (adminLevelValue != null && adminLevelValue >= 2 && adminLevelValue <= 10) {
+      if (adminLevelValue != null && adminLevelValue >= 2 && adminLevelValue <= 6) {
         boolean disputed = isDisputed(relation.tags());
         if (code != null) {
           regionNames.put(relation.id(), code);
@@ -238,7 +238,7 @@ public class Boundary implements
         }
       }
 
-      if (minAdminLevel <= 10) {
+      if (minAdminLevel <= 6) {
         boolean wayIsDisputed = isDisputed(feature.tags());
         disputed |= wayIsDisputed;
         if (wayIsDisputed) {
@@ -250,8 +250,8 @@ public class Boundary implements
           feature.hasTag("boundary_type", "maritime");
         int minzoom =
           (maritime && minAdminLevel == 2) ? 4 :
-            minAdminLevel <= 4 ? 5 :
-            minAdminLevel <= 6 ? 9 :
+            minAdminLevel <= 4 ? 4 :
+            minAdminLevel <= 6 ? 6 :
             minAdminLevel <= 8 ? 11 : 12;
         if (addCountryNames && !regionIds.isEmpty()) {
           // save for later
@@ -282,8 +282,8 @@ public class Boundary implements
         } else {
           features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
             .setAttr(Fields.ADMIN_LEVEL, minAdminLevel)
-            .setAttr(Fields.DISPUTED, disputed ? 1 : 0)
-            .setAttr(Fields.MARITIME, maritime ? 1 : 0)
+            .setAttr(Fields.DISPUTED, disputed ? 1 : null)
+            .setAttr(Fields.MARITIME, maritime ? 1 : null)
             .setMinPixelSizeAtAllZooms(0)
             .setMinZoom(minzoom)
             .setAttr(Fields.CLAIMED_BY, claimedBy)
@@ -314,8 +314,8 @@ public class Boundary implements
             var features = featureCollectors.get(SimpleFeature.fromWorldGeometry(lineString));
             features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
               .setAttr(Fields.ADMIN_LEVEL, key.adminLevel)
-              .setAttr(Fields.DISPUTED, key.disputed ? 1 : 0)
-              .setAttr(Fields.MARITIME, key.maritime ? 1 : 0)
+              .setAttr(Fields.DISPUTED, key.disputed ? 1 : null)
+              .setAttr(Fields.MARITIME, key.maritime ? 1 : null)
               .setAttr(Fields.CLAIMED_BY, key.claimedBy)
               .setAttr(Fields.DISPUTED_NAME, key.disputed ? editName(key.name) : null)
               .setAttr(Fields.ADM0_L, borderingRegions.left == null ? null : regionNames.get(borderingRegions.left))

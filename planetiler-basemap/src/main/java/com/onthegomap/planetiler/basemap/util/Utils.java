@@ -27,6 +27,9 @@ public class Utils {
   public static <T> T coalesce(T a, T b, T c, T d, T e, T f) {
     return a != null ? a : b != null ? b : c != null ? c : d != null ? d : e != null ? e : f;
   }
+  public static <T> T coalesce(T a, T b, T c, T d, T e, T f, T g) {
+    return a != null ? a : b != null ? b : c != null ? c : d != null ? d : e != null ? e : f != null ? f : g;
+  }
 
   /** Boxes {@code a} into an {@link Integer}, or {@code null} if {@code a} is {@code nullValue}. */
   public static Long nullIfLong(long a, long nullValue) {
@@ -36,6 +39,11 @@ public class Utils {
   /** Boxes {@code a} into a {@link Long}, or {@code null} if {@code a} is {@code nullValue}. */
   public static Integer nullIfInt(int a, int nullValue) {
     return a == nullValue ? null : a;
+  }
+
+  /** Boxes {@code a} into a {@link Long}, or {@code null} if {@code a} is {@code nullValue}. */
+  public static String nullIfString(String a, String nullValue) {
+    return nullValue.equals(a) ? null : a;
   }
 
   /** Returns {@code a}, or null if {@code a} is "". */
@@ -49,10 +57,13 @@ public class Utils {
   }
 
   /** Returns a map with {@code ele} (meters) and {ele_ft} attributes from an elevation in meters. */
-  public static Map<String, Object> elevationTags(double meters) {
+  public static Map<String, Object> elevationTags(Double meters) {
+    if (meters == null) {
+      return Map.of();
+    }
     return Map.of(
-      "ele", (int) Math.round(meters),
-      "ele_ft", (int) Math.round(meters * 3.2808399)
+      "ele", (int) Math.round(meters)
+      // "ele_ft", (int) Math.round(meters * 3.2808399)
     );
   }
 

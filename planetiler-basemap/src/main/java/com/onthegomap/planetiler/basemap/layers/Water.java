@@ -45,6 +45,8 @@ import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
+import com.onthegomap.planetiler.util.ZoomFunction;
+import java.util.Map;
 
 /**
  * Defines the logic for generating map elements for oceans and lakes in the {@code water} layer from source features.
@@ -66,6 +68,12 @@ public class Water implements
    */
 
   private final MultiExpression.Index<String> classMapping;
+
+  private static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
+    11, 0,
+    10, 1.6,
+    8, 1
+  ));
 
   public Water(Translations translations, PlanetilerConfig config, Stats stats) {
     this.classMapping = FieldMappings.Class.index();
@@ -107,11 +115,13 @@ public class Water implements
         classMapping.getOrElse(element.source(), FieldValues.CLASS_LAKE);
       features.polygon(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
-        .setMinPixelSizeBelowZoom(11, 2)
+        .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
         .setMinZoom(6)
-        .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : 0)
+        .setSimplifyUsingVW(true)
+        .setPixelToleranceFactor(0.8)
+        .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : null)
         .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
-        .setAttr(Fields.CLASS, clazz);
+        .setAttr(Fields.CLASS, Utils.nullIfString(clazz, FieldValues.CLASS_LAKE));
     }
   }
 }

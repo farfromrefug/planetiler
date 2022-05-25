@@ -75,10 +75,10 @@ import java.util.function.Function;
  */
 public class TransportationName implements
   OpenMapTilesSchema.TransportationName,
-  Tables.OsmHighwayPoint.Handler,
+  // Tables.OsmHighwayPoint.Handler,
   Tables.OsmHighwayLinestring.Handler,
   Tables.OsmAerialwayLinestring.Handler,
-  Tables.OsmShipwayLinestring.Handler,
+  // Tables.OsmShipwayLinestring.Handler,
   BasemapProfile.FeaturePostProcessor,
   BasemapProfile.IgnoreWikidata,
   ForwardingProfile.OsmNodePreprocessor,
@@ -189,29 +189,29 @@ public class TransportationName implements
     }
   }
 
-  @Override
-  public void process(Tables.OsmHighwayPoint element, FeatureCollector features) {
-    long id = element.source().id();
-    byte value = motorwayJunctionHighwayClasses.getOrDefault(id, (byte) -1);
-    if (value > 0) {
-      HighwayClass cls = HighwayClass.from(value);
-      if (cls != HighwayClass.UNKNOWN) {
-        String subclass = FieldValues.SUBCLASS_JUNCTION;
-        String ref = element.ref();
+  // @Override
+  // public void process(Tables.OsmHighwayPoint element, FeatureCollector features) {
+  //   long id = element.source().id();
+  //   byte value = motorwayJunctionHighwayClasses.getOrDefault(id, (byte) -1);
+  //   if (value > 0) {
+  //     HighwayClass cls = HighwayClass.from(value);
+  //     if (cls != HighwayClass.UNKNOWN) {
+  //       String subclass = FieldValues.SUBCLASS_JUNCTION;
+  //       String ref = element.ref();
 
-        features.point(LAYER_NAME)
-          .setBufferPixels(BUFFER_SIZE)
-          .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
-          .setAttr(Fields.REF, ref)
-          .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
-          .setAttr(Fields.CLASS, highwayClass(cls.highwayValue, null, null, null))
-          .setAttr(Fields.SUBCLASS, subclass)
-          .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
-          .setSortKeyDescending(element.zOrder())
-          .setMinZoom(10);
-      }
-    }
-  }
+  //       features.point(LAYER_NAME)
+  //         .setBufferPixels(BUFFER_SIZE)
+  //         .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
+  //         .setAttr(Fields.REF, ref)
+  //         .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
+  //         .setAttr(Fields.CLASS, highwayClass(cls.highwayValue, null, null, null))
+  //         .setAttr(Fields.SUBCLASS, subclass)
+  //         .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
+  //         .setSortKeyDescending(element.zOrder())
+  //         .setMinZoom(10);
+  //     }
+  //   }
+  // }
 
   @Override
   public void process(Tables.OsmHighwayLinestring element, FeatureCollector features) {
@@ -243,16 +243,18 @@ public class TransportationName implements
     if (element.isArea() || highway == null || highwayClass == null || (name == null && ref == null)) {
       return;
     }
+    String subclass = highwaySubclass(highwayClass, null, highway);
 
     boolean isLink = Transportation.isLink(highway);
     String baseClass = highwayClass.replace("_construction", "");
 
-    int minzoom = FieldValues.CLASS_TRUNK.equals(baseClass) ? 8 :
-      FieldValues.CLASS_MOTORWAY.equals(baseClass) ? 6 :
-      isLink ? 13 : 12; // fallback - get from line minzoom, but floor at 12
-
-    // inherit min zoom threshold from visible road, and ensure we never show a label on a road that's not visible yet.
-    minzoom = Math.max(minzoom, transportation.getMinzoom(element, highwayClass));
+    int minzoom = switch(baseClass) {
+      case FieldValues.CLASS_TRUNK-> 8 ;
+      case FieldValues.CLASS_MOTORWAY-> 6 ;
+      case FieldValues.CLASS_PRIMARY-> 8 ;
+      // inherit min zoom threshold from visible road, and ensure we never show a label on a road that's not visible yet.
+      default -> Math.min(isLink ? 13 : 12, transportation.getMinzoom(element, highwayClass, subclass)); // fallback - get from line minzoom, but floor at 12
+    };
 
     FeatureCollector.Feature feature = features.line(LAYER_NAME)
       .setBufferPixels(BUFFER_SIZE)
@@ -260,22 +262,24 @@ public class TransportationName implements
       // TODO abbreviate road names - can't port osml10n because it is AGPL
       .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
       .setAttr(Fields.REF, ref)
-      .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
-      .setAttr(Fields.NETWORK,
-        firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name : !nullOrEmpty(ref) ? "road" :
-          null)
+      // .setAttr(Fields.REF_LENGTH, ref != null ? ref.length() : null)
+      // // .setAttr(Fields.NETWORK,
+      //   firstRelationWithNetwork != null ? firstRelationWithNetwork.networkType().name : !nullOrEmpty(ref) ? "road" :
+          // null)
       .setAttr(Fields.CLASS, highwayClass)
-      .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, null, highway))
+      .setAttr(Fields.SUBCLASS, subclass)
       .setMinPixelSize(0)
+      // .setPixelToleranceFactor(0.1)
+      .setPixelTolerance(0)
       .setSortKey(element.zOrder())
       .setMinZoom(minzoom);
 
     // populate route_1, route_2, ... tags
-    for (int i = 0; i < Math.min(CONCURRENT_ROUTE_KEYS.size(), relations.size()); i++) {
-      Transportation.RouteRelation routeRelation = relations.get(i);
-      feature.setAttr(CONCURRENT_ROUTE_KEYS.get(i), routeRelation.network() == null ? null :
-        routeRelation.network() + "=" + coalesce(routeRelation.ref(), ""));
-    }
+    // for (int i = 0; i < Math.min(CONCURRENT_ROUTE_KEYS.size(), relations.size()); i++) {
+    //   Transportation.RouteRelation routeRelation = relations.get(i);
+    //   feature.setAttr(CONCURRENT_ROUTE_KEYS.get(i), routeRelation.network() == null ? null :
+    //     routeRelation.network() + "=" + coalesce(routeRelation.ref(), ""));
+    // }
 
     if (brunnel) {
       feature.setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()));
@@ -315,19 +319,19 @@ public class TransportationName implements
     }
   }
 
-  @Override
-  public void process(Tables.OsmShipwayLinestring element, FeatureCollector features) {
-    if (!nullOrEmpty(element.name())) {
-      features.line(LAYER_NAME)
-        .setBufferPixels(BUFFER_SIZE)
-        .setBufferPixelOverrides(MIN_LENGTH)
-        .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
-        .setAttr(Fields.CLASS, element.shipway())
-        .setMinPixelSize(0)
-        .setSortKey(element.zOrder())
-        .setMinZoom(12);
-    }
-  }
+  // @Override
+  // public void process(Tables.OsmShipwayLinestring element, FeatureCollector features) {
+  //   if (!nullOrEmpty(element.name())) {
+  //     features.line(LAYER_NAME)
+  //       .setBufferPixels(BUFFER_SIZE)
+  //       .setBufferPixelOverrides(MIN_LENGTH)
+  //       .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
+  //       .setAttr(Fields.CLASS, element.shipway())
+  //       .setMinPixelSize(0)
+  //       .setSortKey(element.zOrder())
+  //       .setMinZoom(12);
+  //   }
+  // }
 
   @Override
   public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) {
