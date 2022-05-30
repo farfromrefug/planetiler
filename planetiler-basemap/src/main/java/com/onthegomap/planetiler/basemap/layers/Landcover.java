@@ -89,9 +89,9 @@ public class Landcover implements
     7, 1
   ));
   private static final String TEMP_NUM_POINTS_ATTR = "_numpoints";
-  private static final Set<String> WOOD_OR_FOREST = Set.of(
+  private static final Set<String> WOOD_OR_GRASS = Set.of(
     FieldValues.SUBCLASS_WOOD,
-    FieldValues.SUBCLASS_FOREST
+    FieldValues.SUBCLASS_GRASS
   );
   private static final MultiExpression.Index<String> classMapping = FieldMappings.Class.index();
   private static final MultiExpression.Index<String> subclassMapping = FieldMappings.Subclass.index();
@@ -184,23 +184,23 @@ public class Landcover implements
         Object subclassObj = attrs.get(Fields.SUBCLASS);
         if (numPointsObj instanceof Number num && subclassObj instanceof String subclass) {
           long numPoints = num.longValue();
-          if (zoom >= 10) {
-            if (WOOD_OR_FOREST.contains(subclass) && numPoints < 300) {
-              attrs.put(tempGroupKey, "<300");
-              toMerge.add(item);
-            } else { // don't merge
-              result.add(item);
-            }
-          } else if (zoom == 9) {
-            if (WOOD_OR_FOREST.contains(subclass)) {
+          // if (zoom >= 10) {
+          //   if (WOOD_OR_GRASS.contains(subclass) && numPoints < 300) {
+          //     attrs.put(tempGroupKey, "<300");
+          //     toMerge.add(item);
+          //   } else { // don't merge
+          //     result.add(item);
+          //   }
+          // } else if (zoom == 9) {
+            if (WOOD_OR_GRASS.contains(subclass)) {
               attrs.put(tempGroupKey, numPoints < 300 ? "<300" : ">300");
               toMerge.add(item);
             } else { // don't merge
               result.add(item);
             }
-          } else { // zoom between 7 and 8
-            toMerge.add(item);
-          }
+          // } else { // zoom between 7 and 8
+          //   toMerge.add(item);
+          // }
         } else {
           result.add(item);
         }
