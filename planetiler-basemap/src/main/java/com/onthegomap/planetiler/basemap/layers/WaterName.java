@@ -171,7 +171,7 @@ public class WaterName implements
 
   @Override
   public void process(Tables.OsmWaterPolygon element, FeatureCollector features) {
-    if (nullIfEmpty(element.name()) != null) {
+    if (nullIfEmpty(element.name()) != null && !element.source().hasTag("amenity")) {
       try {
         Geometry centerlineGeometry = lakeCenterlines.get(element.source().id());
         FeatureCollector.Feature feature;
