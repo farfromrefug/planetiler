@@ -180,6 +180,7 @@ public class Boundary implements
         .setZoomRange(info.minzoom, info.maxzoom)
         .setMinPixelSizeAtAllZooms(0)
         .setAttr(Fields.ADMIN_LEVEL, info.adminLevel)
+        .setPixelToleranceFactor(0.5)
         // .setAttr(Fields.MARITIME, 0)
         .setAttr(Fields.DISPUTED, disputed ? 1 : null);
     }
@@ -250,7 +251,7 @@ public class Boundary implements
           feature.hasTag("boundary_type", "maritime");
         int minzoom =
           (maritime && minAdminLevel == 2) ? 4 :
-            minAdminLevel <= 4 ? 4 :
+            minAdminLevel <= 4 ? 5 :
             minAdminLevel <= 6 ? 6 :
             minAdminLevel <= 8 ? 11 : 12;
         if (addCountryNames && !regionIds.isEmpty()) {
@@ -285,6 +286,7 @@ public class Boundary implements
             .setAttr(Fields.DISPUTED, disputed ? 1 : null)
             .setAttr(Fields.MARITIME, maritime ? 1 : null)
             .setMinPixelSizeAtAllZooms(0)
+            // .setPixelToleranceFactor(0.5)
             .setMinZoom(minzoom)
             .setAttr(Fields.CLAIMED_BY, claimedBy)
             .setAttr(Fields.DISPUTED_NAME, editName(disputedName));
@@ -313,6 +315,7 @@ public class Boundary implements
 
             var features = featureCollectors.get(SimpleFeature.fromWorldGeometry(lineString));
             features.line(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+              .setPixelToleranceFactor(3.0)
               .setAttr(Fields.ADMIN_LEVEL, key.adminLevel)
               .setAttr(Fields.DISPUTED, key.disputed ? 1 : null)
               .setAttr(Fields.MARITIME, key.maritime ? 1 : null)
