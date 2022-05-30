@@ -566,6 +566,7 @@ public class Transportation implements
           .setAttr(Fields.CLASS, highwayClass)
           .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, element.publicTransport(), element.highway()))
           .setAttr(Fields.BRUNNEL, brunnel("bridge".equals(manMade), false, false))
+          .setSimplifyUsingVW(true)
           .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
           .setSortKey(element.zOrder())
           .setMinZoom(13);
@@ -574,11 +575,16 @@ public class Transportation implements
   }
 
   @Override
-  public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) {
-    double tolerance = config.tolerance(zoom) * 0.8;
+  public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) throws GeometryException {
+    double tolerance = config.tolerance(zoom) * 0.5;
+    double minFeatureSize = config.minFeatureSize(zoom);
     double minLength = coalesce(MIN_LENGTH.apply(zoom), 0).doubleValue();
     // TODO preserve direction for one-way?
-    return FeatureMerge.mergeLineStrings(items, minLength, tolerance, BUFFER_SIZE);
+    if (items.size() > 1) {
+      return FeatureMerge.mergeLineStrings(FeatureMerge.mergeOverlappingPolygons(items, minFeatureSize), minLength, tolerance, BUFFER_SIZE);
+    } else {
+      return items;
+    }
   }
 
   /** Information extracted from route relations to use when processing ways in that relation. */
