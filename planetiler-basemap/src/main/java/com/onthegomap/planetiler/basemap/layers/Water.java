@@ -36,16 +36,21 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 package com.onthegomap.planetiler.basemap.layers;
 
 import com.onthegomap.planetiler.FeatureCollector;
+import com.onthegomap.planetiler.FeatureMerge;
+import com.onthegomap.planetiler.ForwardingProfile;
+import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.basemap.BasemapProfile;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.basemap.util.Utils;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.expression.MultiExpression;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
 import com.onthegomap.planetiler.util.ZoomFunction;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -58,7 +63,8 @@ public class Water implements
   OpenMapTilesSchema.Water,
   Tables.OsmWaterPolygon.Handler,
   BasemapProfile.NaturalEarthProcessor,
-  BasemapProfile.OsmWaterPolygonProcessor {
+  BasemapProfile.OsmWaterPolygonProcessor,
+  ForwardingProfile.FeaturePostProcessor {
 
   /*
    * At low zoom levels, use natural earth for oceans and major lakes, and at high zoom levels
@@ -68,6 +74,7 @@ public class Water implements
    */
 
   private final MultiExpression.Index<String> classMapping;
+  private final PlanetilerConfig config;
 
   private static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
     11, 0,
@@ -77,6 +84,7 @@ public class Water implements
 
   public Water(Translations translations, PlanetilerConfig config, Stats stats) {
     this.classMapping = FieldMappings.Class.index();
+    this.config = config;
   }
 
   @Override
@@ -116,12 +124,17 @@ public class Water implements
       features.polygon(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
         .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
-        .setMinZoom(6)
+        .setMinZoom(clazz == FieldValues.CLASS_RIVER ? 9 : 6)
         .setSimplifyUsingVW(true)
         .setPixelToleranceFactor(0.8)
         .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : null)
         .setAttrWithMinzoom(Fields.BRUNNEL, Utils.brunnel(element.isBridge(), element.isTunnel()), 12)
         .setAttr(Fields.CLASS, Utils.nullIfString(clazz, FieldValues.CLASS_LAKE));
     }
+  }
+
+  @Override
+  public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) throws GeometryException {
+    return items.size() > 1 ? FeatureMerge.mergeOverlappingPolygons(items, config.minFeatureSize(zoom)) : items;
   }
 }
