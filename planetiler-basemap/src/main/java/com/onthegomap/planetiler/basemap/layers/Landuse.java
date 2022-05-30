@@ -39,15 +39,20 @@ import static com.onthegomap.planetiler.basemap.util.Utils.coalesce;
 import static com.onthegomap.planetiler.basemap.util.Utils.nullIfEmpty;
 
 import com.onthegomap.planetiler.FeatureCollector;
+import com.onthegomap.planetiler.FeatureMerge;
+import com.onthegomap.planetiler.ForwardingProfile;
+import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.basemap.BasemapProfile;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
 import com.onthegomap.planetiler.util.ZoomFunction;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -61,7 +66,8 @@ import java.util.Set;
 public class Landuse implements
   OpenMapTilesSchema.Landuse,
   BasemapProfile.NaturalEarthProcessor,
-  Tables.OsmLandusePolygon.Handler {
+  Tables.OsmLandusePolygon.Handler,
+  ForwardingProfile.FeaturePostProcessor {
 
   private static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
     13, 4,
@@ -75,7 +81,11 @@ public class Landuse implements
     FieldValues.CLASS_NEIGHBOURHOOD
   );
 
-  public Landuse(Translations translations, PlanetilerConfig config, Stats stats) {}
+  private final PlanetilerConfig config;
+  
+  public Landuse(Translations translations, PlanetilerConfig config, Stats stats) {
+    this.config = config;
+  }
 
   @Override
   public void processNaturalEarth(String table, SourceFeature feature, FeatureCollector features) {
@@ -119,5 +129,10 @@ public class Landuse implements
         .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
         .setMinZoom(Z6_CLASSES.contains(clazz) ? 6 : 9);
     }
+  }
+
+  @Override
+  public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) throws GeometryException {
+    return items.size() > 1 ? FeatureMerge.mergeOverlappingPolygons(items, config.minFeatureSize(zoom)) : items;
   }
 }
