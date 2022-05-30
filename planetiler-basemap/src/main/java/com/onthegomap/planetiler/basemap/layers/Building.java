@@ -162,10 +162,12 @@ public class Building implements
     if (renderHeight < 3660 && renderMinHeight < 3660) {
       var feature = features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         .setMinZoom(this.mergeZ13Buildings ? 13 : 14)
-        .setMinPixelSize(2)
+        // .setMinPixelSize(2)
         .setAttrWithMinzoom(Fields.RENDER_HEIGHT, nullIfInt(renderHeight, 5), 14)
         .setAttrWithMinzoom(Fields.RENDER_MIN_HEIGHT, nullIfInt(renderMinHeight, 0), 14)
         // .setAttrWithMinzoom(Fields.COLOUR, color, 14)
+        .setSimplifyUsingVW(true)
+        .setPixelToleranceAtMaxZoom(256d / (4096))
         .setAttrWithMinzoom(Fields.HIDE_3D, hide3d, 14)
         // .setAttrWithMinzoom("amenity", nullIfEmpty(element.amenity()), 14)
         // .setAttrWithMinzoom("shop", nullIfEmpty(element.shop()), 14)
