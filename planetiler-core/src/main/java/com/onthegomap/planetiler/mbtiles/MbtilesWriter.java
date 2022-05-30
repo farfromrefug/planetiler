@@ -27,6 +27,7 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.OptionalInt;
 import java.util.Queue;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -267,13 +268,11 @@ public class MbtilesWriter {
         FeatureGroup.TileFeatures tileFeatures = batch.in.get(i);
         featuresProcessed.incBy(tileFeatures.getNumFeaturesProcessed());
         byte[] bytes, encoded;
-        boolean memoized;
         Integer tileDataHash;
         if (tileFeatures.hasSameContents(last)) {
           bytes = lastBytes;
           encoded = lastEncoded;
           tileDataHash = lastTileDataHash;
-          memoized = true;
           memoizedTiles.inc();
         } else {
           VectorTile en = tileFeatures.getVectorTileEncoder();
@@ -293,14 +292,14 @@ public class MbtilesWriter {
             tileDataHash = null;
           }
           lastTileDataHash = tileDataHash;
-          memoized = false;
         }
         int zoom = tileFeatures.tileCoord().z();
         int encodedLength = encoded == null ? 0 : encoded.length;
         totalTileSizesByZoom[zoom].incBy(encodedLength);
         maxTileSizesByZoom[zoom].accumulate(encodedLength);
         result.add(
-          new TileEncodingResult(tileFeatures.tileCoord(), bytes, memoized, tileDataHash)
+          new TileEncodingResult(tileFeatures.tileCoord(), bytes,
+            tileDataHash == null ? OptionalInt.empty() : OptionalInt.of(tileDataHash))
         );
       }
       // hand result off to writer
@@ -381,9 +380,8 @@ public class MbtilesWriter {
       sumSize += totalSize;
       sumCount += totalCount;
       long maxSize = maxTileSizesByZoom[z].get();
-      LOGGER.debug("z{} total:{} avg:{} max:{}",
+      LOGGER.debug("z{} avg:{} max:{}",
         z,
-        format.storage(totalSize, false),
         format.storage(totalCount == 0 ? 0 : (totalSize / totalCount), false),
         format.storage(maxSize, false));
     }

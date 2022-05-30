@@ -1,8 +1,6 @@
 package com.onthegomap.planetiler.collection;
 
 import com.carrotsearch.hppc.LongLongHashMap;
-import com.google.common.io.ByteArrayDataOutput;
-import com.google.common.io.ByteStreams;
 import com.onthegomap.planetiler.Profile;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
@@ -381,14 +379,13 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
      * Used as an optimization to avoid writing the same (ocean) tiles over and over again.
      */
     public int generateContentHash() {
-      ByteArrayDataOutput out = ByteStreams.newDataOutput();
+      int hash = Hashing.FNV1_32_INIT;
       for (var feature : entries) {
-        long layerId = extractLayerIdFromKey(feature.key());
-        out.writeLong(layerId);
-        out.write(feature.value());
-        out.writeBoolean(extractHasGroupFromKey(feature.key()));
+        byte layerId = extractLayerIdFromKey(feature.key());
+        hash = Hashing.fnv1a32(hash, layerId);
+        hash = Hashing.fnv1a32(hash, feature.value());
       }
-      return Hashing.fnv32(out.toByteArray());
+      return hash;
     }
 
     /**
