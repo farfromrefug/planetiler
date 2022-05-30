@@ -269,7 +269,6 @@ public class TransportationName implements
       .setAttr(Fields.CLASS, highwayClass)
       .setAttr(Fields.SUBCLASS, subclass)
       .setMinPixelSize(0)
-      // .setPixelToleranceFactor(0.1)
       .setPixelTolerance(0)
       .setSortKey(element.zOrder())
       .setMinZoom(minzoom);
