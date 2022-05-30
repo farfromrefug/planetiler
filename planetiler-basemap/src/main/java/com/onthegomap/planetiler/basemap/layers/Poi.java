@@ -80,7 +80,7 @@ public class Poi implements
     entry(FieldValues.CLASS_RAILWAY, 40),
     entry(FieldValues.CLASS_BUS, 50),
     entry(FieldValues.CLASS_ATTRACTION, 60),
-    entry(FieldValues.CLASS_HARBOR, 7075),
+    entry(FieldValues.CLASS_HARBOR, 70),
     entry("pharmacy", 75),
     entry(FieldValues.CLASS_STADIUM, 80),
     entry("zoo", 90),
@@ -129,11 +129,11 @@ public class Poi implements
   }
 
   private int minzoom(String subclass, String mappingKey) {
-    if ("alpine_hut".equals(subclass) || "wilderness_hut".equals(subclass) || "camp_site".equals(subclass)) {
+    if ("alpine_hut".equals(subclass) || "wilderness_hut".equals(subclass) || "camp_site".equals(subclass) || "spring".equals(subclass)) {
       return 11;
     }
     boolean lowZoom = ("station".equals(subclass) && "railway".equals(mappingKey)) ||
-      "halt".equals(subclass) || "ferry_terminal".equals(subclass) || "spring".equals(subclass);
+      "halt".equals(subclass) || "ferry_terminal".equals(subclass);
     return lowZoom ? 12 : 14;
   }
 
@@ -170,7 +170,7 @@ public class Poi implements
       default -> rawSubclass.equals(poiClass) ? null : rawSubclass;
     };
     int poiClassRank = poiClassRank(poiClass);
-    int rankOrder = poiClassRank + ((nullOrEmpty(element.name())) ? 2000 : 0);
+    int rankOrder = ((nullOrEmpty(element.name())) ? 2000 : poiClassRank);
 
     output.setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, poiClass)
@@ -184,8 +184,10 @@ public class Poi implements
       .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
       .setPointLabelGridPixelSize(14, 64)
       .setMinZoom(minzoom(element.subclass(), element.mappingKey()));
-    if (subclass != null && !subclass.equals("spring")) {
+    if (!"spring".equals(subclass)) {
       output.setSortKey(rankOrder);
+    } else {
+      output.setAttr(Fields.RANK, 1);
     }
   }
 
