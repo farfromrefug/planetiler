@@ -1135,6 +1135,7 @@ public class OpenMapTilesSchema {
             and(matchAny("highway", "construction"), matchAny("construction", "service"))),
           MultiExpression.entry("track",
             and(matchAny("highway", "construction"), matchAny("construction", "track"))),
+          MultiExpression.entry("via_ferrata", matchAny("highway", "via_ferrata")),
           MultiExpression.entry("raceway",
             and(matchAny("highway", "construction"), matchAny("construction", "raceway")))));
     }
