@@ -453,7 +453,7 @@ public class Transportation implements
           !(surface == null || FieldValues.SURFACE_PAVED.equals(surface)) ||
           !nullOrEmpty(element.sacScale())) && !"footway".equals(subclass)? 13 :
             14;
-        default -> MINZOOMS.get(baseClass);
+        default -> MINZOOMS.getOrDefault(baseClass, 14);
       };
     }
 
