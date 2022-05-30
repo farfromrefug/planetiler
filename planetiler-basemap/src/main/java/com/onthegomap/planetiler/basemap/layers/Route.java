@@ -55,7 +55,6 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
-import com.onthegomap.planetiler.util.ZoomFunction;
 import java.text.DecimalFormat;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -88,14 +87,6 @@ public class Route implements
 
     private static final Logger LOGGER = LoggerFactory.getLogger(Route.class);
 
-    private static final ZoomFunction.MeterToPixelThresholds MIN_PIXEL_LENGTHS = ZoomFunction.meterThresholds()
-        .put(6, 500_000)
-        .put(7, 400_000)
-        .put(8, 300_000)
-        .put(9, 8_000)
-        .put(10, 4_000)
-        .put(11, 1_000);
-
     private final Stats stats;
     private final PlanetilerConfig config;
     private final HashMap<Long, RouteRelationData> routeRelationDatas = new HashMap<>();
@@ -119,10 +110,16 @@ public class Route implements
         if (relation.hasTag("type", "route") && relation.hasTag("route", "bicycle", "hiking", "foot")) {
             String network = relation.getString("network");
             Integer networkType = getNetworkType(network);
+            String name = coalesce(nullIfEmpty(relation.getString("name")), nullIfEmpty(relation.getString("alt_name")));
+            String ref = relation.getString("ref");
+            // if (ref == null && name != null) {
+            //     //TRIM(BOTH '-–' from REGEXP_REPLACE(SPLIT_PART(SPLIT_PART(name, ':', 1), ',', 1), '([^A-Z0-9\:\,\-–]+)|(\M-\m)', '', 'g'))
+            //     ref = (name.split(":")[0].split(",")[0]).replaceAll("([^A-Z0-9\\:\\,\\-–]+)|(\\M-\\m)", "").replaceAll("--", "");
+            // }
             return List.of(new RouteRelation(
-                coalesce(nullIfEmpty(relation.getString("name")), nullIfEmpty(relation.getString("alt_name"))),
+                name,
                 relation.getString("route"),
-                coalesce(relation.getString("ref"), ""),
+                nullIfEmpty(ref),
                 networkType,
                 Parse.meters(relation.getString("ascent")),
                 Parse.meters(relation.getString("descent")),
@@ -165,9 +162,11 @@ public class Route implements
                     .setAttr("osmid", relId)
                     .setAttr("network", networkType)
                     .setAttr("ascent", relation.ascent() != null ? nullIfLong(Math.round(relation.ascent()), 0) : null)
-                    .setAttr("descent", relation.descent() != null ? nullIfLong(Math.round(relation.descent()), 0) : null)
+                    .setAttr("descent",
+                        relation.descent() != null ? nullIfLong(Math.round(relation.descent()), 0) : null)
                     .setMinZoom(minzoom)
-                    .setAttr("distance", relation.distance() != null ? nullIfLong(Math.round(relation.distance()), 0) : null)
+                    .setAttr("distance",
+                        relation.distance() != null ? nullIfLong(Math.round(relation.distance()), 0) : null)
                     .setAttr("symbol", nullIfEmpty(relation.symbol()))
                     .setAttr(Fields.CLASS, relation.route())
                     .setAttr("name", nullIfEmpty(relation.name()))
@@ -244,9 +243,9 @@ public class Route implements
             if (routeRelationData != null) {
                 var latLngBounds = GeoUtils.toLatLonBoundsBounds(routeRelationData.envelope);
                 DecimalFormat df = new DecimalFormat("#.000");
-                String extent = "[" + df.format(latLngBounds.getMinX()) + "," +
+                String extent = df.format(latLngBounds.getMinX()) + "," +
                     df.format(latLngBounds.getMinY()) + "," + df.format(latLngBounds.getMaxX()) +
-                    "," + df.format(latLngBounds.getMaxY()) + "]";
+                    "," + df.format(latLngBounds.getMaxY());
                 attrs.put("extent", extent);
                 if (attrs.get("distance") == null) {
                     attrs.put("distance", nullIfLong(Math.round(routeRelationData.computedDistance), 0));
@@ -254,7 +253,7 @@ public class Route implements
             }
         }
         // double minLength = config.minFeatureSize(zoom);
-        double tolerance = config.tolerance(zoom) * 0.8;
+        double tolerance = config.tolerance(zoom) * 0.5;
         return FeatureMerge.mergeLineStrings(items, attrs -> 0.0, tolerance, BUFFER_SIZE);
     }
 
