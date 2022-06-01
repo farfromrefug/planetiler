@@ -691,7 +691,7 @@ public class Tables {
 
     /** Imposm3 "mapping" to filter OSM elements that should appear in this "table". */
     public static final Expression MAPPING =
-      and(matchAny("place", "state", "province", "county"), matchField("name"), matchType("point"));
+      and(matchAny("place", "state", "province"), matchField("name"), matchType("point"));
 
     /**
      * Interface for layer implementations to extend to subscribe to OSM elements filtered and parsed as
