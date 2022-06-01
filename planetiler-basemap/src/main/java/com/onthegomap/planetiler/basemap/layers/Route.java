@@ -107,19 +107,25 @@ public class Route implements
 
     @Override
     public List<OsmRelationInfo> preprocessOsmRelation(OsmElement.Relation relation) {
-        if (relation.hasTag("type", "route") && relation.hasTag("route", "bicycle", "hiking", "foot")) {
+        if (relation.hasTag("type", "route", "superroute") && relation.hasTag("route", "bicycle", "hiking", "foot")) {
             String network = relation.getString("network");
+            String type = relation.getString("type");
             Integer networkType = getNetworkType(network);
-            String name = coalesce(nullIfEmpty(relation.getString("name")), nullIfEmpty(relation.getString("alt_name")));
-            String ref = relation.getString("ref");
+            String name =
+                coalesce(nullIfEmpty(relation.getString("name")), nullIfEmpty(relation.getString("alt_name")));
+            String ref = coalesce(nullIfEmpty(relation.getString("ref")), nullIfEmpty(relation.getString("osmc:ref")));
             // if (ref == null && name != null) {
             //     //TRIM(BOTH '-–' from REGEXP_REPLACE(SPLIT_PART(SPLIT_PART(name, ':', 1), ',', 1), '([^A-Z0-9\:\,\-–]+)|(\M-\m)', '', 'g'))
             //     ref = (name.split(":")[0].split(",")[0]).replaceAll("([^A-Z0-9\\:\\,\\-–]+)|(\\M-\\m)", "").replaceAll("--", "");
             // }
+            // if (relation.hasTag("type", "superroute")) {
+            //     LOGGER.warn("superroute: " + name + " " + ref + " " + networkType + " " + relation.id());
+            // }
             return List.of(new RouteRelation(
+                type,
                 name,
                 relation.getString("route"),
-                nullIfEmpty(ref),
+                ref,
                 networkType,
                 Parse.meters(relation.getString("ascent")),
                 Parse.meters(relation.getString("descent")),
@@ -136,6 +142,9 @@ public class Route implements
         if (routes != null && !routes.isEmpty() && feature.canBeLine()) {
             for (var route : routes) {
                 var relation = route.relation();
+                // if (relation.type.equals("superroute")) {
+                //     LOGGER.warn("processAllOsm superroute: " + relation.name + " " + relation.id());
+                // }
                 long relId = relation.id();
                 RouteRelationData routeRelationData;
                 if (!routeRelationDatas.containsKey(relId)) {
@@ -156,9 +165,13 @@ public class Route implements
                 String name = relation.name();
                 int networkType = relation.networkType();
                 int minzoom = getMinzoom(networkType, name != null);
+                // if (relation.type.equals("superroute")) {
+                // if (networkType == 1) {
+                //     LOGGER.warn("processAllOsm route: " + name);
+                // }
                 features.line(LAYER_NAME)
                     .setBufferPixels(BUFFER_SIZE)
-                    .setAttr("ref", nullIfEmpty(route.relation().ref()))
+                    .setAttr("ref", relation.ref())
                     .setAttr("osmid", relId)
                     .setAttr("network", networkType)
                     .setAttr("ascent", relation.ascent() != null ? nullIfLong(Math.round(relation.ascent()), 0) : null)
@@ -169,7 +182,7 @@ public class Route implements
                         relation.distance() != null ? nullIfLong(Math.round(relation.distance()), 0) : null)
                     .setAttr("symbol", nullIfEmpty(relation.symbol()))
                     .setAttr(Fields.CLASS, relation.route())
-                    .setAttr("name", nullIfEmpty(relation.name()))
+                    .setAttr("name", name)
                     .setMinPixelSize(0);
             }
         }
@@ -252,13 +265,25 @@ public class Route implements
                 }
             }
         }
-        // double minLength = config.minFeatureSize(zoom);
-        double tolerance = config.tolerance(zoom) * 0.5;
-        return FeatureMerge.mergeLineStrings(items, attrs -> 0.0, tolerance, BUFFER_SIZE);
+        double minLength = config.minFeatureSize(zoom) / 2.0;
+        double tolerance = config.tolerance(zoom);
+        // double tolerance = zoom== 7 ? 100 : config.tolerance(zoom);
+        // if (zoom==6) {
+        //     tolerance = 2000;
+        //     LOGGER.warn("route merging " + zoom + " " + tolerance + " " + items.size());
+
+        // }
+        items = FeatureMerge.mergeLineStrings(items, attrs -> 0.0, tolerance, BUFFER_SIZE);
+        // if (zoom==6) {
+        //     LOGGER.warn("route merging done " + zoom + " " + tolerance + " " + items.size() + " " + items.get(0).attrs().get("name"));
+
+        // }
+        return items;
     }
 
     /** Information extracted from route relations to use when processing ways in that relation. */
     record RouteRelation(
+        String type,
         String name,
         String route,
         String ref,
