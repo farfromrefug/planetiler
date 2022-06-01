@@ -87,6 +87,7 @@ public class Poi implements
     entry(FieldValues.CLASS_TOWN_HALL, 95),
     entry(FieldValues.CLASS_CAMPSITE, 100),
     entry("national_park", 104),
+    entry("aerialway", 105),
     entry("drinking_water", 110),
     entry(FieldValues.CLASS_CEMETERY, 115),
     entry(FieldValues.CLASS_PARK, 120),
