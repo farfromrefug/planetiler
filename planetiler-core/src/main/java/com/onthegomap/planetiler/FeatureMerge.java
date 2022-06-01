@@ -83,7 +83,9 @@ public class FeatureMerge {
     Function<Map<String, Object>, Double> lengthLimitCalculator, double tolerance, double buffer) {
     List<VectorTile.Feature> result = new ArrayList<>(features.size());
     var groupedByAttrs = groupByAttrs(features, result, GeometryType.LINE);
+    // if (tolerance>=2000) LOGGER.warn("mergeLineStrings " + groupedByAttrs.size());
     for (List<VectorTile.Feature> groupedFeatures : groupedByAttrs) {
+      // if (tolerance>=2000) LOGGER.warn("groupedFeatures " + groupedFeatures.size());
       VectorTile.Feature feature1 = groupedFeatures.get(0);
       double lengthLimit = lengthLimitCalculator.apply(feature1.attrs());
 
@@ -91,7 +93,7 @@ public class FeatureMerge {
       // - only 1 element in the group
       // - it doesn't need to be clipped
       // - and it can't possibly be filtered out for being too short
-      if (groupedFeatures.size() == 1 && buffer == 0d && lengthLimit == 0) {
+      if (groupedFeatures.size() == 1 && buffer == 0d && lengthLimit == 0 && tolerance == 0) {
         result.add(feature1);
       } else {
         LineMerger merger = new LineMerger();
@@ -107,7 +109,9 @@ public class FeatureMerge {
           if (merged instanceof LineString line && line.getLength() >= lengthLimit) {
             // re-simplify since some endpoints of merged segments may be unnecessary
             if (line.getNumPoints() > 2 && tolerance >= 0) {
+              // if (tolerance>=2000) LOGGER.warn("line string simplify emitted " + line.getNumPoints() + " " + tolerance);
               Geometry simplified = DouglasPeuckerSimplifier.simplify(line, tolerance);
+              // if (tolerance>=2000)  LOGGER.warn("line string simplify done " + simplified.getNumPoints() + " " + tolerance);
               if (simplified instanceof LineString simpleLineString) {
                 line = simpleLineString;
               } else {
