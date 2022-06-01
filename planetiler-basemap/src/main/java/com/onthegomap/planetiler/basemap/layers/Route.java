@@ -183,6 +183,7 @@ public class Route implements
                     .setAttr("symbol", nullIfEmpty(relation.symbol()))
                     .setAttr(Fields.CLASS, relation.route())
                     .setAttr("name", name)
+                    .setSortKey(feature.getWayZorder())
                     .setMinPixelSize(0);
             }
         }
@@ -210,10 +211,56 @@ public class Route implements
 
     @Override
     public void process(Tables.OsmRouteLinestring element, FeatureCollector features) {
-        RouteRelation relation = getRouteRelation(element);
-        if (relation != null) {
-            return;
-        }
+        // List<RouteRelation> relations = getRouteRelations(element);
+        // List<OsmReader.RelationMember<RouteRelation>> routes = feature.relationInfo(RouteRelation.class);
+        // if (routes != null && !routes.isEmpty() && feature.canBeLine()) {
+        // for (var relation : relations) {
+        //     // var relation = route.relation();
+        //     // if (relation.type.equals("superroute")) {
+        //     //     LOGGER.warn("processAllOsm superroute: " + relation.name + " " + relation.id());
+        //     // }
+        //     long relId = relation.id();
+        //     RouteRelationData routeRelationData;
+        //     if (!routeRelationDatas.containsKey(relId)) {
+        //         routeRelationData = new RouteRelationData();
+        //         routeRelationDatas.put(relId, routeRelationData);
+        //     } else {
+        //         routeRelationData = routeRelationDatas.get(relId);
+
+        //     }
+        //     try {
+        //         if (relation.distance == null) {
+        //             routeRelationData.computedDistance += element.source().length() * 40075 / 2.0;
+        //         }
+        //         routeRelationData.envelope.expandToInclude(element.source().envelope());
+        //     } catch (GeometryException e) {
+        //         e.log(stats, "route_decode", "Unable to get route length for " + element.source().id());
+        //     }
+        //     String name = relation.name();
+        //     int networkType = relation.networkType();
+        //     int minzoom = getMinzoom(networkType, name != null);
+        //     // if (relation.type.equals("superroute")) {
+        //     // if (networkType == 1) {
+        //     //     LOGGER.warn("processAllOsm route: " + name);
+        //     // }
+        //     features.line(LAYER_NAME)
+        //         .setBufferPixels(BUFFER_SIZE)
+        //         .setAttr("ref", relation.ref())
+        //         .setAttr("osmid", relId)
+        //         .setAttr("network", networkType)
+        //         .setAttr("ascent", relation.ascent() != null ? nullIfLong(Math.round(relation.ascent()), 0) : null)
+        //         .setAttr("descent",
+        //             relation.descent() != null ? nullIfLong(Math.round(relation.descent()), 0) : null)
+        //         .setMinZoom(minzoom)
+        //         .setAttr("distance",
+        //             relation.distance() != null ? nullIfLong(Math.round(relation.distance()), 0) : null)
+        //         .setAttr("symbol", nullIfEmpty(relation.symbol()))
+        //         .setAttr(Fields.CLASS, relation.route())
+        //         .setAttr("name", name)
+        //         .setSortKey(element.zOrder())
+        //         .setMinPixelSize(0);
+        //     // }
+        // }
         // String network = element.source().getString("network");
         // String ref = element.source().getString("ref");
         // String name = coalesce(nullIfEmpty(element.source().getString("name")),
@@ -266,7 +313,7 @@ public class Route implements
             }
         }
         double minLength = config.minFeatureSize(zoom) / 2.0;
-        double tolerance = config.tolerance(zoom);
+        double tolerance = config.tolerance(zoom) * 0.5;
         // double tolerance = zoom== 7 ? 100 : config.tolerance(zoom);
         // if (zoom==6) {
         //     tolerance = 2000;
