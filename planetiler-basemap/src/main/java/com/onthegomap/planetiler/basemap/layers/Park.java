@@ -79,7 +79,7 @@ public class Park implements
 
   // constants for determining the minimum zoom level for a park label based on its area
   private static final double WORLD_AREA_FOR_70K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(70_000)) / 256d, 2);
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(90_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   private static final double SMALLEST_PARK_WORLD_AREA = Math.pow(4, -26); // 2^14 tiles, 2^12 pixels per tile
 
@@ -103,18 +103,19 @@ public class Park implements
     try {
       Double area = element.source().area();
       // park shape
+      int minzoom = getMinZoomForArea(area);
       var outline = features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         .setAttr(Fields.CLASS, clazz)
+        // .setAttr("area",area)
         .setAttr("way_pixels",
-          area != null ? (ZoomFunction<Long>) zoom -> nullIfLong(Math.round(area * Math.pow(256 * zoom ^ 2, 2)), 0) :
+          area != null ? (ZoomFunction<Long>) zoom -> nullIfLong(Math.round(area * Math.pow(256 * Math.pow(2, zoom-1), 2)), 0) :
             null)
         // .setAttr(Fields.SUBCLASS, nullIfEmpty(protectionTitle))
         .setMinPixelSize(2)
         .setPixelToleranceFactor(2.5)
-        .setMinZoom(4);
+        .setMinZoom(minzoom);
       // park name label point (if it has one)
       if (element.name() != null) {
-        int minzoom = getMinZoomForArea(area);
 
         var names = LanguageUtils.getNamesWithoutTranslations(element.source().tags());
 
@@ -143,7 +144,7 @@ public class Park implements
     // sql filter:    area > 70000*2^(20-zoom_level)
     // simplifies to: zoom_level > 20 - log(area / 70000) / log(2)
     int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_70K_SQUARE_METERS) / LOG2);
-    minzoom = Math.min(14, Math.max(5, minzoom));
+    minzoom = Math.min(14, Math.max(4, minzoom));
     return minzoom;
   }
 
