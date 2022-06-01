@@ -171,7 +171,7 @@ public class Poi implements
       default -> rawSubclass.equals(poiClass) ? null : rawSubclass;
     };
     int poiClassRank = poiClassRank(poiClass);
-    int rankOrder = ((nullOrEmpty(element.name())) ? 2000 : poiClassRank);
+    int rankOrder = poiClassRank + ((nullOrEmpty(element.name())) ? 2000 : 0);
 
     output.setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, poiClass)
