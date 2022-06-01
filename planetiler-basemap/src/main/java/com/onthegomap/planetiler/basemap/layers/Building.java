@@ -167,7 +167,7 @@ public class Building implements
         .setAttrWithMinzoom(Fields.RENDER_MIN_HEIGHT, nullIfInt(renderMinHeight, 0), 14)
         // .setAttrWithMinzoom(Fields.COLOUR, color, 14)
         .setSimplifyUsingVW(true)
-        .setPixelToleranceAtMaxZoom(256d / (4096))
+        // .setPixelToleranceAtMaxZoom(256d / 4096 * 1.5)
         .setAttrWithMinzoom(Fields.HIDE_3D, hide3d, 14)
         // .setAttrWithMinzoom("amenity", nullIfEmpty(element.amenity()), 14)
         // .setAttrWithMinzoom("shop", nullIfEmpty(element.shop()), 14)
