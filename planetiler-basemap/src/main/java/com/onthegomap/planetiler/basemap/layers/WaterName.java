@@ -186,7 +186,7 @@ public class WaterName implements
           Geometry geometry = element.source().worldGeometry();
           double area = geometry.getArea();
           minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_4K_SQUARE_METERS) / LOG2);
-          minzoom = Math.min(14, Math.max(9, minzoom));
+          minzoom = Math.min(14, Math.max(4, minzoom));
         }
         if (feature != null) {
           feature
