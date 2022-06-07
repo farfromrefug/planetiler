@@ -108,7 +108,7 @@ public class Tables {
     /** Imposm3 "mapping" to filter OSM elements that should appear in this "table". */
     public static final Expression MAPPING =
       and(or(matchAny("landuse", "reservoir", "basin", "salt_pond"), matchAny("leisure", "swimming_pool"),
-        matchAny("natural", "water", "bay", "spring", "strait"), matchAny("waterway", "riverbank", "dock"),
+        matchAny("natural", "water", "bay", "strait"), matchAny("waterway", "riverbank", "dock"),
         matchAny("amenity", "fountain"),
         matchAny("water", "river")), not(matchAny("covered", "yes")), matchType("polygon"));
 
