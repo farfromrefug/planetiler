@@ -47,6 +47,7 @@ import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.basemap.BasemapProfile;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
+import com.onthegomap.planetiler.basemap.util.LanguageUtils;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.geo.GeoUtils;
@@ -386,7 +387,7 @@ public class Transportation implements
         // main attributes at all zoom levels (used for grouping <= z8)
         .setAttr(Fields.CLASS, highwayClass)
         .setAttr(Fields.SUBCLASS, subclass)
-        .setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()))
+        .setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel() || element.isCovered(), element.isFord()))
         // .setAttr(Fields.NETWORK, networkType != null ? networkType.name : null)
         // z8+
         // .setAttrWithMinzoom(Fields.EXPRESSWAY, element.expressway() && !"motorway".equals(highway) ? 1 : null, 8)
@@ -566,6 +567,7 @@ public class Transportation implements
           .setAttr(Fields.CLASS, highwayClass)
           .setAttr(Fields.SUBCLASS, highwaySubclass(highwayClass, element.publicTransport(), element.highway()))
           .setAttr(Fields.BRUNNEL, brunnel("bridge".equals(manMade), false, false))
+          .putAttrs(LanguageUtils.getNamesWithoutTranslations(element.source().tags()))
           .setSimplifyUsingVW(true)
           .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
           .setSortKey(element.zOrder())
