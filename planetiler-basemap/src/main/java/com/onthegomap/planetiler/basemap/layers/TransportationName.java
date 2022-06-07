@@ -281,7 +281,7 @@ public class TransportationName implements
     // }
 
     if (brunnel) {
-      feature.setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel(), element.isFord()));
+      feature.setAttr(Fields.BRUNNEL, brunnel(element.isBridge(), element.isTunnel() || element.isCovered(), element.isFord()));
     }
 
     /*
