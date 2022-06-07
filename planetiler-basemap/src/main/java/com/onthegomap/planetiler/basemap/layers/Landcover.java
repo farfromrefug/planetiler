@@ -90,6 +90,7 @@ public class Landcover implements
   ));
   private static final String TEMP_NUM_POINTS_ATTR = "_numpoints";
   private static final Set<String> WOOD_OR_GRASS = Set.of(
+    FieldValues.SUBCLASS_FARMLAND,
     FieldValues.SUBCLASS_WOOD,
     FieldValues.SUBCLASS_GRASS
   );
