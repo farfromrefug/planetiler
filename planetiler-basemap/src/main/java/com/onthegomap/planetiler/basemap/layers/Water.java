@@ -125,7 +125,7 @@ public class Water implements
       features.polygon(LAYER_NAME)
         .setBufferPixels(BUFFER_SIZE)
         .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
-        .setMinZoom(clazz == FieldValues.CLASS_RIVER ? 9 : 6)
+        .setMinZoom(clazz == FieldValues.CLASS_RIVER ? 8 : 6)
         .setSimplifyUsingVW(true)
         .setPixelToleranceFactor(0.8)
         .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : null)
