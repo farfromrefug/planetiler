@@ -435,7 +435,7 @@ public class Tables {
     /** Imposm3 "mapping" to filter OSM elements that should appear in this "table". */
     public static final Expression MAPPING =
       and(matchAny("aerialway", "cable_car", "chair_lift", "drag_lift", "t-bar", "j-bar", "gondola", "mixed_lift",
-        "platter", "rope_tow"), matchType("linestring"));
+        "platter", "rope_tow", "zip_line"), matchType("linestring"));
 
     /**
      * Interface for layer implementations to extend to subscribe to OSM elements filtered and parsed as
