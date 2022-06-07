@@ -156,7 +156,7 @@ public class Tables {
         "grassland", "meadow", "forest", "village_green", "recreation_ground"),
       matchAny("natural", "wood", "wetland", "fell", "grassland", "heath", "scrub", "tundra", "glacier", "bare_rock",
         "scree", "beach", "sand", "dune"),
-      matchAny("leisure", "park", "garden", "golf_course"), matchAny("wetland", "bog", "swamp", "wet_meadow", "marsh",
+      matchAny("leisure", "garden", "golf_course"), matchAny("wetland", "bog", "swamp", "wet_meadow", "marsh",
         "reedbed", "saltern", "tidalflat", "saltmarsh", "mangrove")),
       matchType("polygon"));
 
@@ -207,7 +207,7 @@ public class Tables {
       matchAny("amenity", "parking", "bus_station", "school", "university", "kindergarten", "college", "library",
         "hospital",
         "grave_yard"),
-      matchAny("leisure", "stadium", "pitch", "playground", "track"), matchAny("tourism", "theme_park", "zoo"),
+      matchAny("leisure", "stadium", "park", "pitch", "playground", "track"), matchAny("tourism", "theme_park", "zoo"),
       matchAny("place", "suburb", "quarter", "neighbourhood"), matchAny("waterway", "dam"),
       matchAny("highway", "pedestrian")), matchType("polygon"));
 
