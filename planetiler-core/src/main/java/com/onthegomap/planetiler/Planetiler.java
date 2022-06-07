@@ -376,7 +376,7 @@ public class Planetiler {
 
   public Translations translations() {
     if (translations == null) {
-      boolean transliterate = arguments.getBoolean("transliterate", "attempt to transliterate latin names", true);
+      boolean transliterate = arguments.getBoolean("transliterate", "attempt to transliterate latin names", false);
       List<String> languages = arguments.getList("languages", "languages to use", this.languages);
       translations = Translations.defaultProvider(languages).setShouldTransliterate(transliterate);
     }
