@@ -121,8 +121,8 @@ public class MountainPeak implements
       var natural = element.source().getTag("natural");
       var feature = features.point(LAYER_NAME)
         .setAttr(Fields.CLASS, natural)
-        .setAttr("wikipedia", nullIfEmpty(element.wikipedia()))
-        .setAttr("wikidata", nullIfEmpty((String)element.source().getTag("wikidata")))
+        // .setAttr("wikipedia", nullIfEmpty(element.wikipedia()))
+        // .setAttr("wikidata", nullIfEmpty((String)element.source().getTag("wikidata")))
         .setAttr("summitcross", nullIfInt(element.summitcross() ? 1 : 0, 0))
         .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
         .putAttrs(elevationTags(meters))

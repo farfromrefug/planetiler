@@ -125,7 +125,7 @@ public class Park implements
           .setAttr(Fields.CLASS, clazz)
           // .setAttr(Fields.SUBCLASS, nullIfEmpty(protectionTitle))
           .putAttrs(names)
-          .setAttr("wikipedia", nullIfEmpty((String) element.source().getTag("wikipedia")))
+          // .setAttr("wikipedia", nullIfEmpty((String) element.source().getTag("wikipedia")))
           // .setAttr("way_pixels", area)
           .setPointLabelGridPixelSize(14, 100)
           .setSortKey(SortKey
