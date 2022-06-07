@@ -35,6 +35,8 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 */
 package com.onthegomap.planetiler.basemap.layers;
 
+import static com.onthegomap.planetiler.basemap.util.Utils.nullIfLong;
+
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
@@ -44,15 +46,16 @@ import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
+import com.onthegomap.planetiler.util.ZoomFunction;
 import java.util.Set;
 
 public class LandcoverName implements
   OpenMapTilesSchema.LandcoverName,
   Tables.OsmLandcoverPolygon.Handler {
-    private static final Set<String> IGNORED_SUBCLASS = Set.of("park", "recreation_ground", "garden", "golf_course");
+    private static final Set<String> IGNORED_SUBCLASS = Set.of("recreation_ground", "garden", "golf_course", "allotments", "plant_nursery", "farm", "farmland", "orchard", "vineyard", "village_green");
 
-  private static final double WORLD_AREA_FOR_50K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(70_000)) / 256d, 2);
+  private static final double WORLD_AREA_FOR_5K_SQUARE_METERS =
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(5_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   /*
    * Generate building names from OSM data. 
@@ -69,8 +72,8 @@ public class LandcoverName implements
   private int getMinZoomForArea(double area) {
     // sql filter:    area > 50000*2^(20-zoom_level)
     // simplifies to: zoom_level > 20 - log(area / 50000) / log(2)
-    int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_50K_SQUARE_METERS) / LOG2);
-    minzoom = Math.min(14, Math.max(5, minzoom));
+    int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_5K_SQUARE_METERS) / LOG2);
+    minzoom = Math.min(14, Math.max(9, minzoom));
     return minzoom;
   }
 
@@ -81,12 +84,16 @@ public class LandcoverName implements
       String clazz = Landcover.getClassFromSubclass(subclass);
       if (element.source().hasTag("name") && clazz != null &&
         (subclass == null || !IGNORED_SUBCLASS.contains(subclass))) {
-        double area = element.source().area();
+        Double area = element.source().area();
         String subclazz = Landcover.getSubclassFromSubclass(subclass); 
         var names = LanguageUtils.getNames(element.source().tags(), translations);
         features.pointOnSurface(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
           .setAttr(Fields.CLASS, clazz)
           .setAttr(Fields.SUBCLASS, clazz)
+          .setAttr("way_pixels",
+            area != null ?
+              (ZoomFunction<Long>) zoom -> nullIfLong(Math.round(area * Math.pow(256 * Math.pow(2, zoom - 1), 2)), 0) :
+              null)
           .setAttr(Fields.SUBCLASS, (subclazz == null || clazz.equals(subclazz)) ? null : subclazz)
           .putAttrs(names)
           .setMinZoom(getMinZoomForArea(area));
