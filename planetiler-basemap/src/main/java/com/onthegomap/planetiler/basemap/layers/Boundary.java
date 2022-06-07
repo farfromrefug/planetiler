@@ -167,12 +167,12 @@ public class Boundary implements
       case "ne_50m_admin_0_boundary_lines_land" -> new BoundaryInfo(2, 1, 3);
       case "ne_10m_admin_0_boundary_lines_land" -> feature.hasTag("featurecla", "Lease Limit") ? null :
         new BoundaryInfo(2, 4, 4);
-      // case "ne_10m_admin_1_states_provinces_lines" -> {
-      //   Double minZoom = Parse.parseDoubleOrNull(feature.getTag("min_zoom"));
-      //   yield minZoom != null && minZoom <= 7 ? new BoundaryInfo(4, 1, 4) :
-      //     minZoom != null && minZoom <= 7.7 ? new BoundaryInfo(4, 4, 4) :
-      //     null;
-      // }
+      case "ne_10m_admin_1_states_provinces_lines" -> {
+        Double minZoom = Parse.parseDoubleOrNull(feature.getTag("min_zoom"));
+        yield minZoom != null && minZoom <= 7 ? new BoundaryInfo(4, 1, 4) :
+          minZoom != null && minZoom <= 7.7 ? new BoundaryInfo(4, 4, 4) :
+          null;
+      }
       default -> null;
     };
     if (info != null) {
