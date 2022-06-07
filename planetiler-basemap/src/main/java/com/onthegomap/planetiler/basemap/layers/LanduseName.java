@@ -35,6 +35,8 @@ See https://github.com/openmaptiles/openmaptiles/blob/master/LICENSE.md for deta
 */
 package com.onthegomap.planetiler.basemap.layers;
 
+import static com.onthegomap.planetiler.basemap.util.Utils.nullIfLong;
+
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
@@ -44,6 +46,7 @@ import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Translations;
+import com.onthegomap.planetiler.util.ZoomFunction;
 
 public class LanduseName implements
   OpenMapTilesSchema.LanduseName,
@@ -86,15 +89,18 @@ public class LanduseName implements
           clazz.equals("retail") ||
           clazz.equals("track") ||
           clazz.equals("playground") ||
-          clazz.equals("dam") ||
-          clazz.equals("pedestrian")) &&
+          clazz.equals("dam")) &&
         element.source().hasTag("name")) {
 
         var names = LanguageUtils.getNames(element.source().tags(), translations);
-        double area = element.source().area();
+        Double area = element.source().area();
 
         features.pointOnSurface(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
           .setAttr(Fields.CLASS, clazz)
+          .setAttr("way_pixels",
+            area != null ?
+              (ZoomFunction<Long>) zoom -> nullIfLong(Math.round(area * Math.pow(256 * Math.pow(2, zoom - 1), 2)), 0) :
+              null)
           .putAttrs(names)
           .setMinZoom(getMinZoomForArea(area));
       }
