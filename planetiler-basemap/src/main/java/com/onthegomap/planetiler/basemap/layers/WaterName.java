@@ -174,13 +174,13 @@ public class WaterName implements
     if (nullIfEmpty(element.name()) != null && !element.source().hasTag("amenity")) {
       try {
         Geometry centerlineGeometry = lakeCenterlines.get(element.source().id());
-        FeatureCollector.Feature feature;
+        FeatureCollector.Feature feature = null;
         int minzoom = 9;
         if (centerlineGeometry != null) {
           // prefer lake centerline if it exists
           feature = features.geometry(LAYER_NAME, centerlineGeometry)
             .setMinPixelSizeBelowZoom(13, 6d * element.name().length());
-        } else {
+        } else if (!"riverbank".equals(element.waterway()) && !"river".equals(element.water())) {
           // otherwise just use a label point inside the lake
           feature = features.pointOnSurface(LAYER_NAME);
           Geometry geometry = element.source().worldGeometry();
@@ -188,12 +188,14 @@ public class WaterName implements
           minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_4K_SQUARE_METERS) / LOG2);
           minzoom = Math.min(14, Math.max(9, minzoom));
         }
-        feature
+        if (feature != null) {
+          feature
           .setAttr(Fields.CLASS, FieldValues.CLASS_LAKE)
           .setBufferPixels(BUFFER_SIZE)
           .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
           .setAttr(Fields.INTERMITTENT, element.isIntermittent() ? 1 : null)
           .setMinZoom(minzoom);
+        }
       } catch (GeometryException e) {
         e.log(stats, "omt_water_polygon", "Unable to get geometry for water polygon " + element.source().id());
       }
