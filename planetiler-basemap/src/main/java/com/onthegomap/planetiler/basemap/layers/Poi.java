@@ -81,23 +81,24 @@ public class Poi implements
     entry(FieldValues.CLASS_BUS, 50),
     entry(FieldValues.CLASS_ATTRACTION, 60),
     entry(FieldValues.CLASS_HARBOR, 70),
-    entry("pharmacy", 75),
     entry(FieldValues.CLASS_STADIUM, 80),
     entry("zoo", 90),
     entry(FieldValues.CLASS_TOWN_HALL, 95),
     entry(FieldValues.CLASS_CAMPSITE, 100),
-    entry("national_park", 104),
+    entry("pharmacy", 101),
+    entry("national_park", 103),
     entry("aerialway", 105),
-    entry("drinking_water", 110),
     entry(FieldValues.CLASS_CEMETERY, 115),
-    entry(FieldValues.CLASS_PARK, 120),
-    entry(FieldValues.CLASS_PITCH, 123),
+    entry("drinking_water", 121),
     entry(FieldValues.CLASS_COLLEGE, 125),
     entry(FieldValues.CLASS_SCHOOL, 130),
     entry("police", 135),
     entry(FieldValues.CLASS_POST, 140),
     entry("bakery", 150),
+    entry(FieldValues.CLASS_PARK, 151),
+    entry(FieldValues.CLASS_PITCH, 152),
     entry(FieldValues.CLASS_GOLF, 155),
+    entry("bank", 156),
     entry(FieldValues.CLASS_BEER, 160),
     entry("biergarten", 161),
     entry(FieldValues.CLASS_BAR, 170),
@@ -176,10 +177,10 @@ public class Poi implements
     output.setBufferPixels(BUFFER_SIZE)
       .setAttr(Fields.CLASS, poiClass)
       .setAttr(Fields.SUBCLASS, subclass)
-      .setAttr("historic", nullIfEmpty((String) element.source().getTag("historic")))
+      // .setAttr("historic", nullIfEmpty((String) element.source().getTag("historic")))
       .setAttr(Fields.LAYER, nullIfLong(element.layer(), 0))
       .setAttr(Fields.LEVEL, Parse.parseLongOrNull(element.source().getTag("level")))
-      .setAttr("capacity", Parse.parseLongOrNull(element.source().getTag("capacity")))
+      // .setAttr("capacity", Parse.parseLongOrNull(element.source().getTag("capacity")))
       .setAttr("funicular", nullIfLong(Parse.boolInt(element.source().getTag("funicular")), 0))
       .setAttr(Fields.INDOOR, element.indoor() ? 1 : null)
       .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
