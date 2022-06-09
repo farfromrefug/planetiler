@@ -416,7 +416,7 @@ public class Transportation implements
         .setMinPixelSize(0) // merge during post-processing, then limit by size
         // .setPixelToleranceFactor(1.6)
 
-        .setPixelTolerance(0)
+        // .setPixelTolerance(0)
         // .setMinPixelSizeFactor(0.2)
         .setSortKey(element.zOrder())
         .setMinZoom(minzoom);
