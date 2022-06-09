@@ -138,10 +138,9 @@ public class Route implements
 
     @Override
     public void processAllOsm(SourceFeature feature, FeatureCollector features) {
-        List<OsmReader.RelationMember<RouteRelation>> routes = feature.relationInfo(RouteRelation.class);
-        if (routes != null && !routes.isEmpty() && feature.canBeLine()) {
-            for (var route : routes) {
-                var relation = route.relation();
+        List<RouteRelation> relations = getRouteRelations(feature);
+        if (relations != null && !relations.isEmpty() && feature.canBeLine()) {
+            for (var relation : relations) {
                 // if (relation.type.equals("superroute")) {
                 //     LOGGER.warn("processAllOsm superroute: " + relation.name + " " + relation.id());
                 // }
@@ -190,9 +189,9 @@ public class Route implements
     }
 
 
-    List<RouteRelation> getRouteRelations(Tables.OsmRouteLinestring element) {
+    List<RouteRelation> getRouteRelations(SourceFeature feature) {
         // String ref = element.ref();
-        List<OsmReader.RelationMember<RouteRelation>> relations = element.source().relationInfo(RouteRelation.class);
+        List<OsmReader.RelationMember<RouteRelation>> relations = feature.relationInfo(RouteRelation.class);
         List<RouteRelation> result = new ArrayList<>(relations.size() + 1);
         for (var relationMember : relations) {
             var relation = relationMember.relation();
@@ -204,8 +203,8 @@ public class Route implements
         return result;
     }
 
-    RouteRelation getRouteRelation(Tables.OsmRouteLinestring element) {
-        List<RouteRelation> all = getRouteRelations(element);
+    RouteRelation getRouteRelation(SourceFeature feature) {
+        List<RouteRelation> all = getRouteRelations(feature);
         return all.isEmpty() ? null : all.get(0);
     }
 
