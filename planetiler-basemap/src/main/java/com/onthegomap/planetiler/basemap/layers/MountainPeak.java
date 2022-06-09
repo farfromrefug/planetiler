@@ -39,14 +39,12 @@ import static com.onthegomap.planetiler.basemap.util.Utils.elevationTags;
 import static com.onthegomap.planetiler.basemap.util.Utils.nullIfEmpty;
 import static com.onthegomap.planetiler.basemap.util.Utils.nullIfInt;
 
-import com.carrotsearch.hppc.LongIntMap;
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.VectorTile;
 import com.onthegomap.planetiler.basemap.BasemapProfile;
 import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.basemap.util.LanguageUtils;
-import com.onthegomap.planetiler.collection.Hppc;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryType;
@@ -54,8 +52,11 @@ import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Parse;
 import com.onthegomap.planetiler.util.Translations;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.Predicate;
+import java.util.stream.Collectors;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.prep.PreparedGeometry;
@@ -78,6 +79,7 @@ public class MountainPeak implements
   Tables.OsmMountainLinestring.Handler,
   BasemapProfile.FeaturePostProcessor {
 
+  static final double POINT_BUFFER_SIZE = 8.0;
 
   /*
    * Mountain peaks come from OpenStreetMap data and are ranked by importance (based on if they
@@ -89,13 +91,35 @@ public class MountainPeak implements
 
   private final Translations translations;
   private final Stats stats;
+  private final PlanetilerConfig config;
   // keep track of areas that prefer feet to meters to set customary_ft=1 (just U.S.)
   private PreparedGeometry unitedStates = null;
-  private final AtomicBoolean loggedNoUS = new AtomicBoolean(false);
+  // private final AtomicBoolean loggedNoUS = new AtomicBoolean(false);
+
+  private double RADIUS_DISTANCE_PX;
+  private double RADIUS_VERY_CLOSE_DISTANCE_PX;
+  private double MAX_RANK;
 
   public MountainPeak(Translations translations, PlanetilerConfig config, Stats stats) {
     this.translations = translations;
     this.stats = stats;
+    this.config = config;
+
+    RADIUS_DISTANCE_PX = config.arguments().getDouble(
+      "mountain_peak_radius",
+      "mountain_peak layer: radius for clustering in meters",
+      30
+    );
+    RADIUS_VERY_CLOSE_DISTANCE_PX = config.arguments().getDouble(
+      "mountain_peak_radius_close",
+      "mountain_peak layer: close radius for clustering in meters",
+      8
+    );
+    MAX_RANK = config.arguments().getDouble(
+      "mountain_peak_max_rank",
+      "mountain_peak layer: close radius for clustering in meters",
+      2
+    );
   }
 
   @Override
@@ -119,7 +143,10 @@ public class MountainPeak implements
     Double meters = Parse.meters(element.ele());
     if (element.source().hasTag("name") || (meters != null && Math.abs(meters) < 10_000)) {
       var natural = element.source().getTag("natural");
-      var feature = features.point(LAYER_NAME)
+      var metersInt = meters != null ? meters.intValue() : 0;
+      var metersThousandRounded = Math.round(metersInt / 1000);
+      var minzoom = Math.max(6, 10 - metersThousandRounded);
+      features.point(LAYER_NAME)
         .setAttr(Fields.CLASS, natural)
         // .setAttr("wikipedia", nullIfEmpty(element.wikipedia()))
         // .setAttr("wikidata", nullIfEmpty((String)element.source().getTag("wikidata")))
@@ -127,17 +154,10 @@ public class MountainPeak implements
         .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
         .putAttrs(elevationTags(meters))
         .setSortKeyDescending(
-          (meters != null ? meters.intValue() : 0) +
-            // (nullIfEmpty(element.wikipedia()) != null ? 10_000 : 0) +
-            ("peak".equals(natural) ? 10_000 : 0) +
-            (nullIfEmpty(element.name()) != null ? 10_000 : 0)
+          metersInt + ("peak".equals(natural) ? 10_000 : 0) + (nullIfEmpty(element.name()) != null ? 10_000 : 0)
         )
-        .setMinZoom(7)
-        // need to use a larger buffer size to allow enough points through to not cut off
-        // any label grid squares which could lead to inconsistent label ranks for a feature
-        // in adjacent tiles. postProcess() will remove anything outside the desired buffer.
-        .setBufferPixels(100)
-        .setPointLabelGridSizeAndLimit(13, 100, 10);
+        .setMinZoom(minzoom)
+        .setBufferPixels(BUFFER_SIZE);
 
       // if (peakInAreaUsingFeet(element)) {
       //   feature.setAttr(Fields.CUSTOMARY_FT, 1);
@@ -155,43 +175,104 @@ public class MountainPeak implements
   }
 
   /** Returns true if {@code element} is a point in an area where feet are used insead of meters (the US). */
-  private boolean peakInAreaUsingFeet(Tables.OsmPeakPoint element) {
-    if (unitedStates == null) {
-      if (!loggedNoUS.get() && loggedNoUS.compareAndSet(false, true)) {
-        LOGGER.warn("No US polygon for inferring mountain_peak customary_ft tag");
-      }
-    } else {
-      try {
-        Geometry wayGeometry = element.source().worldGeometry();
-        return unitedStates.intersects(wayGeometry);
-      } catch (GeometryException e) {
-        e.log(stats, "omt_mountain_peak_us_test",
-          "Unable to test mountain_peak against US polygon: " + element.source().id());
+  // private boolean peakInAreaUsingFeet(Tables.OsmPeakPoint element) {
+  //   if (unitedStates == null) {
+  //     if (!loggedNoUS.get() && loggedNoUS.compareAndSet(false, true)) {
+  //       LOGGER.warn("No US polygon for inferring mountain_peak customary_ft tag");
+  //     }
+  //   } else {
+  //     try {
+  //       Geometry wayGeometry = element.source().worldGeometry();
+  //       return unitedStates.intersects(wayGeometry);
+  //     } catch (GeometryException e) {
+  //       e.log(stats, "omt_mountain_peak_us_test",
+  //         "Unable to test mountain_peak against US polygon: " + element.source().id());
+  //     }
+  //   }
+  //   return false;
+  // }
+
+  private record GeomWithData<T> (Coordinate coord, T data) {}
+
+  public <T> List<T> filter(Predicate<T> criteria, List<T> list) {
+    return list.stream().filter(criteria).collect(Collectors.<T>toList());
+  }
+
+  public <T> List<T> getPointsWithin(Point point, double threshold, List<T> items) {
+    List<T> result = new ArrayList<>(items.size());
+    Coordinate coord = point.getCoordinate();
+    // then post-filter by circular radius
+    for (Object item : items) {
+      if (item instanceof GeomWithData<?> value) {
+        double distance = value.coord.distance(coord);
+        if (distance <= threshold) {
+          result.add((T) item);
+        }
       }
     }
-    return false;
+    return result;
   }
 
   @Override
   public List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) {
-    LongIntMap groupCounts = Hppc.newLongIntHashMap();
+    // LongIntMap groupCounts = Hppc.newLongIntHashMap();
+    // List<VectorTile.Feature> newItems = filter(feature -> feature.geometry().geomType() != GeometryType.POINT, items);
+
+    // var cluster =
+    //   new DBScanCluster(filter(feature -> feature.geometry().geomType() == GeometryType.POINT && insideTileBuffer(feature), items), eps,  3, zoom);
+    // var result = cluster.dbScanCluster();
+    // for (VectorTile.Feature feature : result.noisePoints()) {
+    //   if (!feature.attrs().containsKey(Fields.RANK)) {
+    //     feature.attrs().put(Fields.RANK, 1);
+    //   }
+    //   newItems.add(feature);
+    // }
+    // for (List<VectorTile.Feature> features : result.clusters()) {
+    //   features.sort(Comparator.comparingDouble(f -> {
+    //     Long meters = (Long) (f.attrs().get("ele"));
+    //     return 400_000 -((meters != null ? meters.longValue() : 0) +
+    //       ("peak".equals(f.attrs().get(Fields.CLASS)) ? 10_000 : 0) +
+    //       (nullIfEmpty((String) f.attrs().get("name")) != null ? 10_000 : 0));
+    //   }));
+    //   int index = 1;
+    //   for (VectorTile.Feature feature : features.subList(0,3)) {
+    //     if (!feature.attrs().containsKey(Fields.RANK)) {
+    //       feature.attrs().put(Fields.RANK, index++);
+    //     }
+    //     newItems.add(feature);
+    //   }
+    // }
+
+    List<GeomWithData> peaks = new ArrayList<>();
     for (int i = 0; i < items.size(); i++) {
       VectorTile.Feature feature = items.get(i);
-      int gridrank = groupCounts.getOrDefault(feature.group(), 1);
-      groupCounts.put(feature.group(), gridrank + 1);
-      // now that we have accurate ranks, remove anything outside the desired buffer
-      if (!insideTileBuffer(feature) || (gridrank > 5 && zoom <= 13)) {
+      if (!insideTileBuffer(feature)) {
         items.set(i, null);
-        // we filter on "name" to kind of filter on points...
-      } else if (feature.geometry().geomType() == GeometryType.POINT && !feature.attrs().containsKey(Fields.RANK)) {
-        feature.attrs().put(Fields.RANK, gridrank);
+      } else if (feature.geometry().geomType() == GeometryType.POINT) {
+        try {
+          var geometry = feature.geometry().decode();
+          // closePeaks used to define ranks
+          var closePeaks = getPointsWithin(geometry.getCentroid(), RADIUS_DISTANCE_PX, peaks);
+          // veryClosePeaks allow to remove very close points in tile which will almost never be drawn
+          // because of ranking and overlaping
+          var veryClosePeaks = getPointsWithin(geometry.getCentroid(), RADIUS_VERY_CLOSE_DISTANCE_PX, closePeaks);
+          var count = closePeaks.size();
+          if (veryClosePeaks.size() > 0 || count >= MAX_RANK) {
+            items.set(i, null);
+          } else {
+            feature.attrs().put(Fields.RANK, count + 1);
+            peaks.add(new GeomWithData<>(geometry.getCoordinate(), feature));
+          }
+        } catch (GeometryException e) {
+          e.printStackTrace();
+        }
       }
     }
     return items;
   }
 
   private static boolean insideTileBuffer(double xOrY) {
-    return xOrY >= -BUFFER_SIZE && xOrY <= 256 + BUFFER_SIZE;
+    return xOrY >= -POINT_BUFFER_SIZE && xOrY <= 256 + POINT_BUFFER_SIZE;
   }
 
   private boolean insideTileBuffer(VectorTile.Feature feature) {
