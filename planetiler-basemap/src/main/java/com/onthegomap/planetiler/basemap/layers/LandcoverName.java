@@ -55,7 +55,7 @@ public class LandcoverName implements
     private static final Set<String> IGNORED_SUBCLASS = Set.of("recreation_ground", "garden", "golf_course", "allotments", "plant_nursery", "farm", "farmland", "orchard", "vineyard", "village_green");
 
   private static final double WORLD_AREA_FOR_5K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(5_000)) / 256d, 2);
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(10_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   /*
    * Generate building names from OSM data. 
