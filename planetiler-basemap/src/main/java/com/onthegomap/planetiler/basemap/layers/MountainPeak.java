@@ -242,7 +242,9 @@ public class MountainPeak implements
     //     newItems.add(feature);
     //   }
     // }
-
+    if (zoom == config.maxzoomForRendering()) {
+      return items;
+    }
     List<GeomWithData> peaks = new ArrayList<>();
     for (int i = 0; i < items.size(); i++) {
       VectorTile.Feature feature = items.get(i);
