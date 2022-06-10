@@ -113,12 +113,12 @@ public class MountainPeak implements
     RADIUS_VERY_CLOSE_DISTANCE_PX = config.arguments().getDouble(
       "mountain_peak_radius_close",
       "mountain_peak layer: close radius for clustering in meters",
-      8
+      5
     );
     MAX_RANK = config.arguments().getDouble(
       "mountain_peak_max_rank",
       "mountain_peak layer: close radius for clustering in meters",
-      2
+      3
     );
   }
 
@@ -145,7 +145,7 @@ public class MountainPeak implements
       var natural = element.source().getTag("natural");
       var metersInt = meters != null ? meters.intValue() : 0;
       var metersThousandRounded = Math.round(metersInt / 1000);
-      var minzoom = Math.max(6, 10 - metersThousandRounded);
+      var minzoom = Math.max(2, 10 - metersThousandRounded);
       features.point(LAYER_NAME)
         .setAttr(Fields.CLASS, natural)
         // .setAttr("wikipedia", nullIfEmpty(element.wikipedia()))
