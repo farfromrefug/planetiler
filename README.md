@@ -251,6 +251,6 @@ must [visibly credit OpenMapTiles](https://github.com/openmaptiles/openmaptiles/
 as well.
 
 ## Example generate commands:
-* `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.4-SNAPSHOT-with-deps.jar  --download --area=planet --lang=fr --force --transportation-name-limit-merge --compact-db --only_layers=place,park,boundary,mountain_peak,transportation,transportation_name,water,waterway,water_name,landcover,landuse,route --maxzoom=6 --nodemap-type=array`
+* `java -Xmx20g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=planet --lang=fr --force --transportation-name-limit-merge --compact-db --only_layers=place,park,boundary,mountain_peak,transportation,transportation_name,water,waterway,water_name,landcover,landuse,route --maxzoom=6 --nodemap-type=array`
 
-* `java -Xmx4g -jar ./planetiler-dist/target/planetiler-dist-0.4-SNAPSHOT-with-deps.jar  --download --area=france --lang=fr --force --compact-db --transportation-name-limit-merge --exclude_layers=route`
+* `java -Xmx4g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=france --lang=fr --force --compact-db --transportation-name-limit-merge --exclude_layers=route`
