@@ -114,6 +114,7 @@ public class Park implements
             null)
         // .setAttr(Fields.SUBCLASS, nullIfEmpty(protectionTitle))
         .setMinPixelSize(2)
+        .setSimplifyUsingVW(true)
         .setPixelToleranceFactor(2.5)
         .setMinZoom(minzoom);
       // park name label point (if it has one)

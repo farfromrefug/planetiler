@@ -60,6 +60,7 @@ public class Aeroway implements
   public void process(Tables.OsmAerowayPolygon element, FeatureCollector features) {
     features.polygon(LAYER_NAME)
       .setMinZoom(10)
+      .setSimplifyUsingVW(true)
       .setMinPixelSize(2)
       .setAttr(Fields.CLASS, element.aeroway())
       .setAttr(Fields.REF, element.ref());
