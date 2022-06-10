@@ -84,9 +84,11 @@ public class Park implements
   private static final double SMALLEST_PARK_WORLD_AREA = Math.pow(4, -26); // 2^14 tiles, 2^12 pixels per tile
 
   private final Stats stats;
+  private final Translations translations;
 
   public Park(Translations translations, PlanetilerConfig config, Stats stats) {
     this.stats = stats;
+    this.translations = translations;
   }
 
   @Override
@@ -117,7 +119,7 @@ public class Park implements
       // park name label point (if it has one)
       if (element.name() != null) {
 
-        var names = LanguageUtils.getNamesWithoutTranslations(element.source().tags());
+        var names = LanguageUtils.getNames(element.source().tags(), translations);
 
         outline.putAttrsWithMinzoom(names, 5);
 
