@@ -81,7 +81,7 @@ public class WaterName implements
 
   private static final Logger LOGGER = LoggerFactory.getLogger(WaterName.class);
   private static final double WORLD_AREA_FOR_4K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(4_000)) / 256d, 2);
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(40_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   private final Translations translations;
   // need to synchronize updates from multiple threads
@@ -124,7 +124,9 @@ public class WaterName implements
       }
     }
   }
-
+  private String getMarinePointName(String name) {
+    return name.replaceAll("\\s+", " ").trim().toLowerCase();
+  }
   @Override
   public void processNaturalEarth(String table, SourceFeature feature, FeatureCollector features) {
     // use natural earth named polygons just as a source of name to zoom-level mappings for later
@@ -132,7 +134,7 @@ public class WaterName implements
       String name = feature.getString("name");
       Integer scalerank = Parse.parseIntOrNull(feature.getTag("scalerank"));
       if (name != null && scalerank != null) {
-        name = name.replaceAll("\\s+", " ").trim().toLowerCase();
+        name = getMarinePointName(name);
         importantMarinePoints.put(name, scalerank);
       }
     }
@@ -145,13 +147,13 @@ public class WaterName implements
       var source = element.source();
       // use name from OSM, but get min zoom from natural earth based on fuzzy name match...
       Integer rank = Parse.parseIntOrNull(source.getTag("rank"));
-      String name = element.name().toLowerCase();
+      String name = getMarinePointName(element.name());
       Integer nerank;
       if ((nerank = importantMarinePoints.get(name)) != null) {
         rank = nerank;
-      } else if ((nerank = importantMarinePoints.get(source.getString("name:en", "").toLowerCase())) != null) {
+      } else if ((nerank = importantMarinePoints.get(getMarinePointName(source.getString("name:en", "")))) != null) {
         rank = nerank;
-      } else if ((nerank = importantMarinePoints.get(source.getString("name:es", "").toLowerCase())) != null) {
+      } else if ((nerank = importantMarinePoints.get(getMarinePointName(source.getString("name:es", "")))) != null) {
         rank = nerank;
       } else {
         Map.Entry<String, Integer> next = importantMarinePoints.ceilingEntry(name);
@@ -176,6 +178,10 @@ public class WaterName implements
         Geometry centerlineGeometry = lakeCenterlines.get(element.source().id());
         FeatureCollector.Feature feature = null;
         int minzoom = 9;
+        Geometry geometry = element.source().worldGeometry();
+        double area = geometry.getArea();
+        minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_4K_SQUARE_METERS) / LOG2);
+        minzoom = Math.min(14, Math.max(4, minzoom));
         if (centerlineGeometry != null) {
           // prefer lake centerline if it exists
           feature = features.geometry(LAYER_NAME, centerlineGeometry)
@@ -183,10 +189,6 @@ public class WaterName implements
         } else if (!"riverbank".equals(element.waterway()) && !"river".equals(element.water())) {
           // otherwise just use a label point inside the lake
           feature = features.pointOnSurface(LAYER_NAME);
-          Geometry geometry = element.source().worldGeometry();
-          double area = geometry.getArea();
-          minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_4K_SQUARE_METERS) / LOG2);
-          minzoom = Math.min(14, Math.max(4, minzoom));
         }
         if (feature != null) {
           feature
