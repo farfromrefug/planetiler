@@ -257,12 +257,12 @@ public class Place implements
         var names = LanguageUtils.getNames(element.source().tags(), translations);
 
         int rank = Math.min(6, Math.max(1, state.rank));
-
+        int minzoom = rank == 1 ? 2 : Math.max(3, rank - 1);
         features.point(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
           .putAttrs(names)
           .setAttr(Fields.CLASS, element.place())
           .setAttr(Fields.RANK, rank)
-          .setMinZoom(2)
+          .setMinZoom(minzoom)
           .setSortKey(rank);
       }
     } catch (GeometryException e) {
