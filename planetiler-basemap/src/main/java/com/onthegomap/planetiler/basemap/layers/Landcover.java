@@ -43,6 +43,7 @@ import com.onthegomap.planetiler.basemap.generated.OpenMapTilesSchema;
 import com.onthegomap.planetiler.basemap.generated.Tables;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.expression.MultiExpression;
+import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
@@ -76,6 +77,10 @@ public class Landcover implements
    * had through using a temporary "_numpoints" attribute.
    */
 
+  private static final double WORLD_AREA_FOR_5K_SQUARE_METERS =
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(50_000)) / 256d, 2);
+  private static final double LOG2 = Math.log(2);
+
   public static final ZoomFunction<Number> MIN_PIXEL_SIZE_THRESHOLDS = ZoomFunction.fromMaxZoomThresholds(Map.of(
     13, 8,
     11, 6,
@@ -97,7 +102,9 @@ public class Landcover implements
   private static final MultiExpression.Index<String> classMapping = FieldMappings.Class.index();
   private static final MultiExpression.Index<String> subclassMapping = FieldMappings.Subclass.index();
 
+  private final Stats stats;
   public Landcover(Translations translations, PlanetilerConfig config, Stats stats) {
+    this.stats = stats;
   }
 
   public static String getClassFromSubclass(String subclass) {
@@ -131,26 +138,43 @@ public class Landcover implements
     }
   }
 
+  private int getMinZoomForArea(double area, String subclass) {
+    if (FieldValues.SUBCLASS_GLACIER.equals(subclass)) {
+      return 7;
+    }
+    // sql filter:    area > 50000*2^(20-zoom_level)
+    // simplifies to: zoom_level > 20 - log(area / 50000) / log(2)
+    int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_5K_SQUARE_METERS) / LOG2);
+    minzoom = Math.max(Math.min(7, minzoom),3);
+    return minzoom;
+  }
+
   @Override
   public void process(Tables.OsmLandcoverPolygon element, FeatureCollector features) {
-    String subclass = element.subclass();
-    String clazz = getClassFromSubclass(subclass);
-    
-    if (clazz != null) {
-      String subclazz = getSubclassFromSubclass(subclass);
-      features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
-        // .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
-        // .setPixelToleranceOverrides(PIXEL_TOLERANCE_THRESHOLDS)
-        // .setPixelTolerance(tolerance)
-        .setSimplifyUsingVW(true)
+    try {
+      String subclass = element.subclass();
+      String clazz = getClassFromSubclass(subclass);
 
-        .setPixelToleranceFactor(2.5)
-        .setMinPixelSizeFactor(1.8)
-        .setAttr(Fields.CLASS, clazz)
-        .setAttr(Fields.SUBCLASS, subclazz)
-        // .setAttr(Fields.SUBCLASS, clazz.equals(subclazz) ? null : subclazz)
-        .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
-        .setMinZoom(7);
+      if (clazz != null) {
+        String subclazz = getSubclassFromSubclass(subclass);
+        Double area = element.source().area();
+        features.polygon(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
+          // .setMinPixelSizeOverrides(MIN_PIXEL_SIZE_THRESHOLDS)
+          // .setPixelToleranceOverrides(PIXEL_TOLERANCE_THRESHOLDS)
+          // .setPixelTolerance(tolerance)
+          .setSimplifyUsingVW(true)
+
+          .setPixelToleranceFactor(2.5)
+          .setMinPixelSizeFactor(1.8)
+          .setAttr(Fields.CLASS, clazz)
+          .setAttr(Fields.SUBCLASS, subclazz)
+          // .setAttr(Fields.SUBCLASS, clazz.equals(subclazz) ? null : subclazz)
+          .setNumPointsAttr(TEMP_NUM_POINTS_ATTR)
+          .setMinZoom(getMinZoomForArea(area, subclazz));
+      }
+    } catch (GeometryException e) {
+      e.log(stats, "omt_landcover_poly",
+        "Unable to get area for OSM landcover polygon " + element.source().id());
     }
   }
 
@@ -193,12 +217,12 @@ public class Landcover implements
           //     result.add(item);
           //   }
           // } else if (zoom == 9) {
-            if (WOOD_OR_GRASS.contains(subclass)) {
-              attrs.put(tempGroupKey, numPoints < 300 ? "<300" : ">300");
-              toMerge.add(item);
-            } else { // don't merge
-              result.add(item);
-            }
+          if (WOOD_OR_GRASS.contains(subclass)) {
+            attrs.put(tempGroupKey, numPoints < 300 ? "<300" : ">300");
+            toMerge.add(item);
+          } else { // don't merge
+            result.add(item);
+          }
           // } else { // zoom between 7 and 8
           //   toMerge.add(item);
           // }
