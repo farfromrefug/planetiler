@@ -373,7 +373,7 @@ public class Planetiler {
     fetchWikidata =
       onlyFetchWikidata || arguments.getBoolean("fetch_wikidata", "fetch wikidata translations then continue",
         fetchWikidata);
-    useWikidata = fetchWikidata || arguments.getBoolean("use_wikidata", "use wikidata translations", true);
+    useWikidata = fetchWikidata || arguments.getBoolean("use_wikidata", "use wikidata translations", false);
     wikidataNamesFile = arguments.file("wikidata_cache", "wikidata cache file", defaultWikidataCache);
     return this;
   }
