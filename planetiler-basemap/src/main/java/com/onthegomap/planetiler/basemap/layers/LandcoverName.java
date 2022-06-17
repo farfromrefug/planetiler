@@ -55,7 +55,7 @@ public class LandcoverName implements
     private static final Set<String> IGNORED_SUBCLASS = Set.of("recreation_ground", "garden", "golf_course", "allotments", "plant_nursery", "farm", "farmland", "orchard", "vineyard", "village_green");
 
   private static final double WORLD_AREA_FOR_5K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(10_000)) / 256d, 2);
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(50_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   /*
    * Generate building names from OSM data. 
@@ -73,7 +73,7 @@ public class LandcoverName implements
     // sql filter:    area > 50000*2^(20-zoom_level)
     // simplifies to: zoom_level > 20 - log(area / 50000) / log(2)
     int minzoom = (int) Math.floor(20 - Math.log(area / WORLD_AREA_FOR_5K_SQUARE_METERS) / LOG2);
-    minzoom = Math.min(14, Math.max(9, minzoom));
+    minzoom = Math.min(14, Math.max(6, minzoom));
     return minzoom;
   }
 
