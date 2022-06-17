@@ -276,7 +276,7 @@ public class Place implements
     try {
       double area = element.source().area();
       int rank = ISLAND_AREA_RANKS.ceilingEntry(area).getValue();
-      int minzoom = rank <= 3 ? 8 : rank <= 4 ? 9 : 10;
+      int minzoom = 3 + rank;
 
       features.pointOnSurface(LAYER_NAME).setBufferPixels(BUFFER_SIZE)
         .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
