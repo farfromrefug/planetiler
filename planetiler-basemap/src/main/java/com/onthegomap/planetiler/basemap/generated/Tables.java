@@ -250,7 +250,7 @@ public class Tables {
 
     /** Imposm3 "mapping" to filter OSM elements that should appear in this "table". */
     public static final Expression MAPPING =
-      and(matchAny("natural", "ridge", "cliff", "arete"), matchType("linestring"));
+      and(matchAny("natural", "ridge", "cliff", "arete", "valley"), matchType("linestring"));
 
     /**
      * Interface for layer implementations to extend to subscribe to OSM elements filtered and parsed as
