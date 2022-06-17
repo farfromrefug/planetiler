@@ -135,7 +135,7 @@ public class LanguageUtils {
 
     String name = string(tags.get("name"));
     // String intName = string(tags.get("int_name"));
-    // String nameEn = string(tags.get("name:en"));
+    String nameEn = string(tags.get("name:en"));
     // String nameDe = string(tags.get("name:de"));
 
     boolean isLatin = containsOnlyLatinCharacters(name);
@@ -153,9 +153,9 @@ public class LanguageUtils {
     }
 
     putIfNotEmpty(result, "name", name);
-    if (!isLatin) {
-      putIfNotEmpty(result, "name:latin", latin);
-    }
+    // if (!isLatin) {
+    //   putIfNotEmpty(result, "name:latin", latin);
+    // }
     // putIfNotEmpty(result, "name_en", coalesce(nameEn, name));
     // putIfNotEmpty(result, "name_de", coalesce(nameDe, name, nameEn));
     // putIfNotEmpty(result, "name:nonlatin", nonLatin);
