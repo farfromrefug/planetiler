@@ -81,7 +81,7 @@ public class WaterName implements
 
   private static final Logger LOGGER = LoggerFactory.getLogger(WaterName.class);
   private static final double WORLD_AREA_FOR_4K_SQUARE_METERS =
-    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(40_000)) / 256d, 2);
+    Math.pow(GeoUtils.metersToPixelAtEquator(0, Math.sqrt(70_000)) / 256d, 2);
   private static final double LOG2 = Math.log(2);
   private final Translations translations;
   // need to synchronize updates from multiple threads
