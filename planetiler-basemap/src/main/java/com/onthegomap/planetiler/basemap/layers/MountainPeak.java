@@ -141,9 +141,13 @@ public class MountainPeak implements
   @Override
   public void process(Tables.OsmPeakPoint element, FeatureCollector features) {
     Double meters = Parse.meters(element.ele());
-    if (element.source().hasTag("name") || (meters != null && Math.abs(meters) < 10_000)) {
+    if (element.source().hasTag("name") || (meters != null && Math.abs(meters) < 9_000)) {
       var natural = element.source().getTag("natural");
       var metersInt = meters != null ? meters.intValue() : 0;
+      if (metersInt >= 9000) {
+        // some peaks are in ft. highest peak is 8000ish. so higher must be in ft
+        metersInt = (int) (metersInt * 0.3048);
+      }
       var metersThousandRounded = Math.round(metersInt / 1000);
       var minzoom = Math.max(2, 10 - metersThousandRounded);
       features.point(LAYER_NAME)
@@ -167,10 +171,11 @@ public class MountainPeak implements
 
   @Override
   public void process(Tables.OsmMountainLinestring element, FeatureCollector features) {
+    var clazz = element.source().getTag("natural");
     features.line(LAYER_NAME)
-      .setAttr(Fields.CLASS, element.source().getTag("natural"))
+      .setAttr(Fields.CLASS, clazz)
       .putAttrs(LanguageUtils.getNames(element.source().tags(), translations))
-      .setMinZoom(13)
+      .setMinZoom("cliff".equals(clazz) ? 12 : 10)
       .setBufferPixels(BUFFER_SIZE);
   }
 
