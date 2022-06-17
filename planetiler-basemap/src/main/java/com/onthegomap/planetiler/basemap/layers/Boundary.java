@@ -180,7 +180,7 @@ public class Boundary implements
         .setZoomRange(info.minzoom, info.maxzoom)
         .setMinPixelSizeAtAllZooms(0)
         .setAttr(Fields.ADMIN_LEVEL, info.adminLevel)
-        .setPixelToleranceFactor(0.5)
+        // .setPixelToleranceFactor(0.5)
         // .setAttr(Fields.MARITIME, 0)
         .setAttr(Fields.DISPUTED, disputed ? 1 : null);
     }
@@ -286,7 +286,7 @@ public class Boundary implements
             .setAttr(Fields.DISPUTED, disputed ? 1 : null)
             .setAttr(Fields.MARITIME, maritime ? 1 : null)
             .setMinPixelSizeAtAllZooms(0)
-            // .setPixelToleranceFactor(0.5)
+            .setPixelToleranceFactor(2)
             .setMinZoom(minzoom)
             .setAttr(Fields.CLAIMED_BY, claimedBy)
             .setAttr(Fields.DISPUTED_NAME, editName(disputedName));
