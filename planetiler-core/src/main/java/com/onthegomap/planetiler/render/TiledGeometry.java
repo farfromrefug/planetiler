@@ -427,6 +427,8 @@ class TiledGeometry {
     record SkippedSegment(Direction side, int lo, int hi) {}
     List<SkippedSegment> skipped = null;
 
+    var shape = this.extents.shape();
+
     for (int i = 0; i < stripeSegment.size() - 1; i++) {
       double ax = stripeSegment.getX(i);
       double ay = stripeSegment.getY(i);
@@ -449,6 +451,12 @@ class TiledGeometry {
 
       for (int y = startY; y <= endY; y++) {
 
+        if (shape != null) {
+          TileCoord tileID = TileCoord.ofXYZ(x, y, z);
+            if (!shape.intersects(tileID.getEnvelope())) {
+            continue;
+          }
+        }
         // skip over filled tiles until we get to the next tile that already has detail on it
         if (area && y > endStartY && y < startEndY) {
           if (onRightEdge || onLeftEdge) {
