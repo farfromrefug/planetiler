@@ -57,7 +57,9 @@ public class Bounds {
 
   public Bounds setShape(MultiPolygon shape) {
     this.shape = shape;
-    set(shape.getEnvelopeInternal());
+    if (latLon == null) {
+      set(shape.getEnvelopeInternal());
+    }
     return this;
   }
 
