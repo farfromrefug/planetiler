@@ -372,7 +372,7 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public double getMinPixelSizeAtZoom(int zoom) {
       return zoom == config.maxzoomForRendering() ? minPixelSizeAtMaxZoom :
-        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize * defaultMinPixelSizeFactor);
+        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize);
     }
 
     /**
@@ -456,7 +456,7 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public double getPixelToleranceAtZoom(int zoom) {
       return zoom == config.maxzoomForRendering() ? pixelToleranceAtMaxZoom :
-        ZoomFunction.applyAsDoubleOrElse(pixelTolerance, zoom, defaultPixelTolerance * defaultPixelToleranceFactor);
+        ZoomFunction.applyAsDoubleOrElse(pixelTolerance, zoom, defaultPixelTolerance);
     }
 
     /**

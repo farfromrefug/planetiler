@@ -7,6 +7,7 @@ import com.google.common.collect.Iterators;
 import com.onthegomap.planetiler.reader.FileFormatException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Collections;
@@ -39,8 +40,22 @@ public class PbfDecoder implements Iterable<OsmElement> {
     fieldDecoder = new PbfFieldDecoder(block);
   }
 
+  private PbfDecoder(ByteBuffer rawBlob) throws IOException {
+    byte[] data = readBlobContent(rawBlob);
+    block = Osmformat.PrimitiveBlock.parseFrom(data);
+    fieldDecoder = new PbfFieldDecoder(block);
+  }
+
+  private static byte[] readBlobContent(ByteBuffer input) throws IOException {
+    return readBlobContent(Fileformat.Blob.parseFrom(input));
+
+  }
+
   private static byte[] readBlobContent(byte[] input) throws IOException {
-    Fileformat.Blob blob = Fileformat.Blob.parseFrom(input);
+    return readBlobContent(Fileformat.Blob.parseFrom(input));
+  }
+
+  private static byte[] readBlobContent(Fileformat.Blob blob) {
     byte[] blobData;
 
     if (blob.hasRaw()) {
@@ -67,6 +82,15 @@ public class PbfDecoder implements Iterable<OsmElement> {
 
   /** Decompresses and parses a block of primitive OSM elements. */
   public static Iterable<OsmElement> decode(byte[] raw) {
+    try {
+      return new PbfDecoder(raw);
+    } catch (IOException e) {
+      throw new UncheckedIOException("Unable to process PBF blob", e);
+    }
+  }
+
+  /** Decompresses and parses a block of primitive OSM elements. */
+  public static Iterable<OsmElement> decode(ByteBuffer raw) {
     try {
       return new PbfDecoder(raw);
     } catch (IOException e) {
@@ -149,7 +173,8 @@ public class PbfDecoder implements Iterable<OsmElement> {
         node.getId(),
         buildTags(node.getKeysCount(), node::getKeys, node::getVals),
         fieldDecoder.decodeLatitude(node.getLat()),
-        fieldDecoder.decodeLongitude(node.getLon())
+        fieldDecoder.decodeLongitude(node.getLon()),
+        parseInfo(node.getInfo())
       );
     }
   }
@@ -198,7 +223,8 @@ public class PbfDecoder implements Iterable<OsmElement> {
       return new OsmElement.Relation(
         relation.getId(),
         buildTags(relation.getKeysCount(), relation::getKeys, relation::getVals),
-        members
+        members,
+        parseInfo(relation.getInfo())
       );
     }
   }
@@ -241,27 +267,40 @@ public class PbfDecoder implements Iterable<OsmElement> {
       return new OsmElement.Way(
         way.getId(),
         buildTags(way.getKeysCount(), way::getKeys, way::getVals),
-        wayNodesList
+        wayNodesList,
+        parseInfo(way.getInfo())
       );
     }
+  }
+
+  private OsmElement.Info parseInfo(Osmformat.Info info) {
+    return info == null ? null : new OsmElement.Info(
+      info.getChangeset(),
+      info.getTimestamp(),
+      info.getUid(),
+      info.getVersion(),
+      fieldDecoder.decodeString(info.getUserSid())
+    );
   }
 
   private class DenseNodeIterator implements Iterator<OsmElement.Node> {
 
     final Osmformat.DenseNodes nodes;
-    long nodeId;
-    long latitude;
-    long longitude;
-    int i;
-    int kvIndex;
+    final Osmformat.DenseInfo denseInfo;
+    long nodeId = 0;
+    long latitude = 0;
+    long longitude = 0;
+    int i = 0;
+    int kvIndex = 0;
+    // info
+    long timestamp = 0;
+    long changeset = 0;
+    int uid = 0;
+    int userSid = 0;
 
     public DenseNodeIterator(Osmformat.DenseNodes nodes) {
       this.nodes = nodes;
-      nodeId = 0;
-      latitude = 0;
-      longitude = 0;
-      i = 0;
-      kvIndex = 0;
+      this.denseInfo = nodes.getDenseinfo();
     }
 
 
@@ -279,6 +318,16 @@ public class PbfDecoder implements Iterable<OsmElement> {
       nodeId += nodes.getId(i);
       latitude += nodes.getLat(i);
       longitude += nodes.getLon(i);
+      int version = 0;
+
+      if (denseInfo != null) {
+        version = denseInfo.getVersionCount() > i ? denseInfo.getVersion(i) : 0;
+        timestamp += denseInfo.getTimestampCount() > i ? denseInfo.getTimestamp(i) : 0;
+        changeset += denseInfo.getChangesetCount() > i ? denseInfo.getChangeset(i) : 0;
+        uid += denseInfo.getUidCount() > i ? denseInfo.getUid(i) : 0;
+        userSid += denseInfo.getUserSidCount() > i ? denseInfo.getUserSid(i) : 0;
+      }
+
       i++;
 
       // Build the tags. The key and value string indexes are sequential
@@ -304,7 +353,14 @@ public class PbfDecoder implements Iterable<OsmElement> {
         nodeId,
         tags == null ? Collections.emptyMap() : tags,
         ((double) latitude) / 10000000,
-        ((double) longitude) / 10000000
+        ((double) longitude) / 10000000,
+        denseInfo == null ? null : new OsmElement.Info(
+          changeset,
+          timestamp,
+          uid,
+          version,
+          fieldDecoder.decodeString(userSid)
+        )
       );
     }
   }

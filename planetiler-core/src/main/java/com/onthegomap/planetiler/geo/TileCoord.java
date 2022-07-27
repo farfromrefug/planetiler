@@ -1,6 +1,7 @@
 package com.onthegomap.planetiler.geo;
 
-import com.onthegomap.planetiler.mbtiles.Mbtiles;
+import static com.onthegomap.planetiler.config.PlanetilerConfig.MAX_MAXZOOM;
+
 import com.onthegomap.planetiler.util.Format;
 import javax.annotation.concurrent.Immutable;
 import org.locationtech.jts.geom.Coordinate;
@@ -9,29 +10,49 @@ import org.locationtech.jts.geom.CoordinateXY;
 /**
  * The coordinate of a <a href="https://wiki.openstreetmap.org/wiki/Slippy_map_tilenames">slippy map tile</a>.
  * <p>
- * In order to encode into a 32-bit integer, only zoom levels {@code <= 14} are supported since we need 4 bits for the
- * zoom-level, and 14 bits each for the x/y coordinates.
+ * Tile coords are sorted by consecutive Z levels in ascending order: 0 coords for z=0, 4 coords for z=1, etc. TMS
+ * order: tiles in a level are sorted by x ascending, y descending to match the ordering of the MBTiles sqlite index.
+ * Hilbert order: tiles in a level are ordered on the Hilbert curve with the first coordinate at the tip left.
  * <p>
- * Tiles are ordered by z ascending, x ascending, y descending to match index ordering of {@link Mbtiles} sqlite
- * database.
  *
  * @param encoded the tile ID encoded as a 32-bit integer
  * @param x       x coordinate of the tile where 0 is the western-most tile just to the east the international date line
  *                and 2^z-1 is the eastern-most tile
  * @param y       y coordinate of the tile where 0 is the northern-most tile and 2^z-1 is the southern-most tile
- * @param z       zoom level ({@code <= 14})
+ * @param z       zoom level ({@code <= 15})
  */
 @Immutable
 public record TileCoord(int encoded, int x, int y, int z) implements Comparable<TileCoord> {
-  // TODO: support higher than z14
-  // z15 could theoretically fit into a 32-bit integer but needs a different packing strategy
-  // z16+ would need more space
-  // also need to remove hardcoded z14 limits
 
-  private static final int XY_MASK = (1 << 14) - 1;
+  private static final int[] ZOOM_START_INDEX = new int[MAX_MAXZOOM + 1];
+
+  static {
+    int idx = 0;
+    for (int z = 0; z <= MAX_MAXZOOM; z++) {
+      ZOOM_START_INDEX[z] = idx;
+      int count = (1 << z) * (1 << z);
+      if (Integer.MAX_VALUE - idx < count) {
+        throw new IllegalStateException("Too many zoom levels " + MAX_MAXZOOM);
+      }
+      idx += count;
+    }
+  }
+
+  private static int startIndexForZoom(int z) {
+    return ZOOM_START_INDEX[z];
+  }
+
+  private static int zoomForIndex(int idx) {
+    for (int z = MAX_MAXZOOM; z >= 0; z--) {
+      if (ZOOM_START_INDEX[z] <= idx) {
+        return z;
+      }
+    }
+    throw new IllegalArgumentException("Bad index: " + idx);
+  }
 
   public TileCoord {
-    assert z <= 14;
+    assert z <= MAX_MAXZOOM;
   }
 
   public static TileCoord ofXYZ(int x, int y, int z) {
@@ -39,10 +60,9 @@ public record TileCoord(int encoded, int x, int y, int z) implements Comparable<
   }
 
   public static TileCoord decode(int encoded) {
-    int z = (encoded >> 28) + 8;
-    int x = (encoded >> 14) & XY_MASK;
-    int y = ((1 << z) - 1) - ((encoded) & XY_MASK);
-    return new TileCoord(encoded, x, y, z);
+    int z = zoomForIndex(encoded);
+    long xy = tmsPositionToXY(z, encoded - startIndexForZoom(z));
+    return new TileCoord(encoded, (int) (xy >>> 32 & 0xFFFFFFFFL), (int) (xy & 0xFFFFFFFFL), z);
   }
 
   /** Returns the tile containing a latitude/longitude coordinate at a given zoom level. */
@@ -53,31 +73,8 @@ public record TileCoord(int encoded, int x, int y, int z) implements Comparable<
     return TileCoord.ofXYZ((int) Math.floor(x), (int) Math.floor(y), zoom);
   }
 
-  private static int encode(int x, int y, int z) {
-    int max = 1 << z;
-    if (x >= max) {
-      x %= max;
-    }
-    if (x < 0) {
-      x += max;
-    }
-    if (y < 0) {
-      y = 0;
-    }
-    if (y >= max) {
-      y = max - 1;
-    }
-    // since most significant bit is treated as the sign bit, make:
-    // z0-7 get encoded from 8 (0b1000) to 15 (0b1111)
-    // z8-14 get encoded from 0 (0b0000) to 6 (0b0110)
-    // so that encoded tile coordinates are ordered by zoom level
-    if (z < 8) {
-      z += 8;
-    } else {
-      z -= 8;
-    }
-    y = max - 1 - y;
-    return (z << 28) | (x << 14) | y;
+  public static int encode(int x, int y, int z) {
+    return startIndexForZoom(z) + tmsXYToPosition(z, x, y);
   }
 
   @Override
@@ -102,6 +99,13 @@ public record TileCoord(int encoded, int x, int y, int z) implements Comparable<
   @Override
   public String toString() {
     return "{x=" + x + " y=" + y + " z=" + z + '}';
+  }
+
+  public double progressOnLevel(TileExtents extents) {
+    // approximate percent complete within a bounding box by computing what % of the way through the columns we are
+    // (for hilbert ordering, we probably won't be able to reflect the bounding box)
+    var zoomBounds = extents.getForZoom(z);
+    return 1d * (x - zoomBounds.minX()) / (zoomBounds.maxX() - zoomBounds.minX());
   }
 
   @Override
@@ -131,5 +135,19 @@ public record TileCoord(int encoded, int x, int y, int z) implements Comparable<
     double x = GeoUtils.getWorldX(lng) * factor;
     double y = GeoUtils.getWorldY(lat) * factor;
     return new CoordinateXY((x - Math.floor(x)) * 256, (y - Math.floor(y)) * 256);
+  }
+
+  public static long tmsPositionToXY(int z, int pos) {
+    if (z == 0)
+      return 0;
+    int dim = 1 << z;
+    int x = pos / dim;
+    int y = dim - 1 - (pos % dim);
+    return ((long) x << 32) | y;
+  }
+
+  public static int tmsXYToPosition(int z, int x, int y) {
+    int dim = 1 << z;
+    return x * dim + (dim - 1 - y);
   }
 }

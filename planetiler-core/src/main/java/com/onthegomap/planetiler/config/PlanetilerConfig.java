@@ -2,6 +2,10 @@ package com.onthegomap.planetiler.config;
 
 import com.onthegomap.planetiler.collection.LongLongMap;
 import com.onthegomap.planetiler.collection.Storage;
+import com.onthegomap.planetiler.reader.osm.PolyFileReader;
+import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.stream.Stream;
 
@@ -18,7 +22,6 @@ public record PlanetilerConfig(
   Duration logInterval,
   int minzoom,
   int maxzoom,
-  int minzoomForRendering,
   int maxzoomForRendering,
   boolean skipIndexCreation,
   boolean optimizeDb,
@@ -44,11 +47,13 @@ public record PlanetilerConfig(
   double simplifyToleranceBelowMaxZoom,
   boolean osmLazyReads,
   boolean compactDb,
-  boolean skipFilledTiles
+  boolean skipFilledTiles,
+  int tileWarningSizeBytes
 ) {
 
   public static final int MIN_MINZOOM = 0;
-  public static final int MAX_MAXZOOM = 14;
+  public static final int MAX_MAXZOOM = 15;
+  private static final int DEFAULT_MAXZOOM = 14;
 
   public PlanetilerConfig {
     if (minzoom > maxzoom) {
@@ -90,19 +95,34 @@ public record PlanetilerConfig(
     int featureProcessThreads =
       arguments.getInteger("process_threads", "number of threads to use when processing input features",
         Math.max(threads < 4 ? threads : (threads - featureWriteThreads), 1));
+    Bounds bounds = new Bounds(arguments.bounds("bounds", "bounds"));
+    Path polygonFile =
+      arguments.file("polygon", "a .poly file that limits output to tiles intersecting the shape", null);
+    if (polygonFile != null) {
+      try {
+        bounds.setShape(PolyFileReader.parsePolyFile(polygonFile));
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+    }
+
+    int minzoom = arguments.getInteger("minzoom", "minimum zoom level", MIN_MINZOOM);
+    int maxzoom = arguments.getInteger("maxzoom", "maximum zoom level up to " + MAX_MAXZOOM, DEFAULT_MAXZOOM);
+    int renderMaxzoom =
+      arguments.getInteger("render_maxzoom", "maximum rendering zoom level up to " + MAX_MAXZOOM,
+        Math.max(maxzoom, DEFAULT_MAXZOOM));
     return new PlanetilerConfig(
       arguments,
-      new Bounds(arguments.bounds("bounds", "bounds")),
+      bounds,
       threads,
       featureWriteThreads,
       featureProcessThreads,
       arguments.getInteger("feature_read_threads", "number of threads to use when reading features at tile write time",
         threads < 32 ? 1 : 2),
       arguments.getDuration("loginterval", "time between logs", "10s"),
-      arguments.getInteger("minzoom", "minimum zoom level", MIN_MINZOOM),
-      arguments.getInteger("maxzoom", "maximum zoom level (limit 14)", MAX_MAXZOOM),
-      arguments.getInteger("minzoomForRendering", "minimum zoom level", MIN_MINZOOM),
-      arguments.getInteger("maxzoomForRendering", "maximum rendering zoom level (limit 14)", MAX_MAXZOOM),
+      minzoom,
+      maxzoom,
+      renderMaxzoom,
       arguments.getBoolean("skip_mbtiles_index_creation", "skip adding index to mbtiles file", false),
       arguments.getBoolean("optimize_db", "optimize mbtiles after writing", false),
       arguments.getBoolean("emit_tiles_in_order", "emit tiles in index order", true),
@@ -144,13 +164,16 @@ public record PlanetilerConfig(
         0.45d),
       arguments.getBoolean("osm_lazy_reads",
         "Read OSM blocks from disk in worker threads",
-        false),
+        true),
       arguments.getBoolean("compact_db",
         "Reduce the DB size by separating and deduping the tile data",
         true),
       arguments.getBoolean("skip_filled_tiles",
         "Skip writing tiles containing only polygon fills to the output",
-        false)
+        false),
+      (int) (arguments.getDouble("tile_warning_size_mb",
+        "Maximum size in megabytes of a tile to emit a warning about",
+        1d) * 1024 * 1024)
     );
   }
 
