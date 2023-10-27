@@ -1,10 +1,11 @@
 # Generating a Map of the World
 
-To generate a map of the world using the built-in [OpenMapTiles profile](https://github.com/openmaptiles/planetiler-openmaptiles), you will need a
+To generate a map of the world using the
+built-in [OpenMapTiles profile](https://github.com/openmaptiles/planetiler-openmaptiles), you will need a
 machine with
-Java 16 or later installed and at least 10x as much disk space and at least 0.5x as much RAM as the `planet.osm.pbf`
+Java 21 or later installed and at least 10x as much disk space and at least 0.5x as much RAM as the `planet.osm.pbf`
 file you start from. All testing has been done using Digital Ocean droplets with dedicated
-vCPUs ([referral link](https://m.do.co/c/a947e99aab25)) and OpenJDK 17 installed through `apt`. Planetiler splits work
+vCPUs ([referral link](https://m.do.co/c/a947e99aab25)) and OpenJDK 21 installed through `apt`. Planetiler splits work
 among available CPUs so the more you have, the less time it takes.
 
 ### 1) Choose the Data Source
@@ -20,6 +21,12 @@ First decide where to get the `planet.osm.pbf` file:
   ```bash
   osmium apply-changes daylight.osm.pbf admin.osc.bz2 <buildings.osc.bz2, ...> -o everything.osm.pbf
   osmium renumber everything.osm.pbf -o planet.osm.pbf
+  ```
+- If you would like to update your `planet.osm.pbf` file to the latest changes from OpenStreetMap, you can
+  use [pyosmium-up-to-date](https://docs.osmcode.org/pyosmium/latest/tools_uptodate.html):
+
+  ```bash
+  pyosmium-up-to-date --size 20000 -v planet.osm.pbf
   ```
 
   NOTE: you need at least `admin.osc.bz2` for the `boundary` layer to show. This takes about 2.5 hours and needs as much
@@ -43,7 +50,7 @@ java -Xmx110g \
   --download-threads=10 --download-chunk-size-mb=1000 \
   `# Also download name translations from wikidata` \
   --fetch-wikidata \
-  --mbtiles=output.mbtiles \
+  --output=output.mbtiles \
   `# Store temporary node locations in memory` \
   --nodemap-type=array --storage=ram
 ```
@@ -60,7 +67,7 @@ java -Xmx20g \
   --download-threads=10 --download-chunk-size-mb=1000 \
   `# Also download name translations from wikidata` \
   --fetch-wikidata \
-  --mbtiles=output.mbtiles \
+  --output=output.mbtiles \
   `# Store temporary node locations at fixed positions in a memory-mapped file` \
   --nodemap-type=array --storage=mmap
 ```
@@ -77,10 +84,10 @@ To generate the tiles shown on https://onthegomap.github.io/planetiler-demo/ I u
 S3 snapshot, then ran Planetiler on a Digital Ocean Memory-Optimized droplet with 16 CPUs, 128GB RAM, and 1.17TB disk
 running Ubuntu 21.04 x64 in the nyc3 location.
 
-First, I installed java 17 jre and screen:
+First, I installed java 21 jre and screen:
 
 ```bash
-apt-get update && apt-get install -y openjdk-17-jre-headless screen
+apt-get update && apt-get install -y openjdk-21-jre-headless screen
 ```
 
 Then I added a script `runworld.sh` to run with 100GB of RAM:
@@ -96,7 +103,7 @@ java -Xmx100g \
   --download-threads=10 --download-chunk-size-mb=1000 \
   `# Also download name translations from wikidata` \
   --fetch-wikidata \
-  --mbtiles=output.mbtiles \
+  --output=output.mbtiles \
   --nodemap-type=sparsearray --nodemap-storage=ram 2>&1 | tee logs.txt
 ```
 

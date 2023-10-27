@@ -293,7 +293,8 @@ public class OsmReader implements Closeable, MemoryEstimator.HasEstimate {
   }
 
   private static boolean isMultipolygon(OsmElement.Relation relation) {
-    return relation.hasTag("type", "multipolygon", "boundary", "land_area");
+    return relation.hasTag("type", "multipolygon", "boundary", "land_area") &&
+      relation.members().stream().anyMatch(m -> m.type() == OsmElement.Type.WAY);
   }
 
   /**
@@ -541,7 +542,7 @@ public class OsmReader implements Closeable, MemoryEstimator.HasEstimate {
   @Override
   public long estimateMemoryUsageBytes() {
     long size = 0;
-    size += waysInMultipolygon.serializedSizeInBytes();
+    size += waysInMultipolygon == null ? 0 : waysInMultipolygon.serializedSizeInBytes();
     // multipolygonWayGeometries is reported separately
     size += estimateSize(wayToRelations);
     size += estimateSize(relationInfo);
@@ -792,10 +793,11 @@ public class OsmReader implements Closeable, MemoryEstimator.HasEstimate {
         if (member.type() == OsmElement.Type.WAY) {
           if (poly != null && !poly.isEmpty()) {
             rings.add(poly);
-          } else if (relation.hasTag("type", "multipolygon")) {
+          } else {
             // boundary and land_area relations might not be complete for extracts, but multipolygons should be
-            LOGGER.warn(
-              "Missing " + role + " OsmWay[" + member.ref() + "] for " + relation.getTag("type") + " " + this);
+            stats.dataError("osm_" + relation.getTag("type") + "_missing_way");
+            LOGGER.trace(
+              "Missing {} OsmWay[{}] for {} {}", role, member.ref(), relation.getTag("type"), this);
           }
         }
       }

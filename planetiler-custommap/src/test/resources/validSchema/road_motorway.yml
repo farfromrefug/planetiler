@@ -9,14 +9,17 @@ sources:
   osm:
     type: osm
     url: geofabrik:rhode-island
+  gpkg:
+    type: geopackage
+    url: https://example.com/geopackage.gpkg.zip
 tag_mappings:
   bridge: boolean # input=bridge, output=bridge, type=boolean
   layer: long
   tunnel: boolean
 layers:
-- name: road
+- id: road
   features:
-  - sources:
+  - source:
     - osm
     min_zoom: 4
     geometry: line
@@ -29,7 +32,7 @@ layers:
         bridge: true
       min_zoom: 11
     - key: tunnel
-      constant_value: true
+      value: true
       include_when:
         tunnel: true
       min_zoom: 11

@@ -7,15 +7,13 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
-import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Lineal;
 import org.locationtech.jts.geom.MultiLineString;
-import org.locationtech.jts.geom.MultiPoint;
 import org.locationtech.jts.geom.MultiPolygon;
-import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.geom.Envelope;
 
 /**
  * Base class for input features read from a data source.
@@ -27,7 +25,7 @@ import org.locationtech.jts.geom.Polygon;
  * All geometries except for {@link #latLonGeometry()} return elements in world web mercator coordinates where (0,0) is
  * the northwest corner and (1,1) is the southeast corner of the planet.
  */
-public abstract class SourceFeature implements WithTags {
+public abstract class SourceFeature implements WithTags, WithGeometryType {
 
   private final Map<String, Object> tags;
   private final String source;
@@ -43,7 +41,7 @@ public abstract class SourceFeature implements WithTags {
   private double area = Double.NaN;
   private double length = Double.NaN;
   private Envelope envelope = null;
-
+  
   /**
    * Constructs a new input feature.
    *
@@ -132,7 +130,7 @@ public abstract class SourceFeature implements WithTags {
   private Geometry computeCentroidIfConvex() throws GeometryException {
     if (!canBePolygon()) {
       return centroid();
-    } else if (polygon() instanceof Polygon poly &&
+    } else if (polygon()instanceof Polygon poly &&
       poly.getNumInteriorRing() == 0 &&
       GeoUtils.isConvex(poly.getExteriorRing())) {
       return centroid();
@@ -173,7 +171,7 @@ public abstract class SourceFeature implements WithTags {
    */
   public final Geometry line() throws GeometryException {
     if (!canBeLine()) {
-      throw new GeometryException("feature_not_line", "cannot be line");
+      throw new GeometryException("feature_not_line", "cannot be line", true);
     }
     if (linearGeometry == null) {
       linearGeometry = computeLine();
@@ -202,7 +200,7 @@ public abstract class SourceFeature implements WithTags {
    */
   public final Geometry polygon() throws GeometryException {
     if (!canBePolygon()) {
-      throw new GeometryException("feature_not_polygon", "cannot be polygon");
+      throw new GeometryException("feature_not_polygon", "cannot be polygon", true);
     }
     return polygonGeometry != null ? polygonGeometry : (polygonGeometry = computePolygon());
   }
@@ -226,7 +224,7 @@ public abstract class SourceFeature implements WithTags {
    */
   public final Geometry validatedPolygon() throws GeometryException {
     if (!canBePolygon()) {
-      throw new GeometryException("feature_not_polygon", "cannot be polygon");
+      throw new GeometryException("feature_not_polygon", "cannot be polygon", true);
     }
     return validPolygon != null ? validPolygon : (validPolygon = computeValidPolygon());
   }
@@ -255,25 +253,6 @@ public abstract class SourceFeature implements WithTags {
   public Envelope envelope() throws GeometryException {
     return envelope == null ? (envelope = worldGeometry().getEnvelopeInternal()) : envelope;
   }
-
-  /** Returns true if this feature can be interpreted as a {@link Point} or {@link MultiPoint}. */
-  public abstract boolean isPoint();
-
-  /**
-   * Returns true if this feature can be interpreted as a {@link Polygon} or {@link MultiPolygon}.
-   * <p>
-   * A closed ring can either be a polygon or linestring, so return false to not allow this closed ring to be treated as
-   * a polygon.
-   */
-  public abstract boolean canBePolygon();
-
-  /**
-   * Returns true if this feature can be interpreted as a {@link LineString} or {@link MultiLineString}.
-   * <p>
-   * A closed ring can either be a polygon or linestring, so return false to not allow this closed ring to be treated as
-   * a linestring.
-   */
-  public abstract boolean canBeLine();
 
   /** Returns the ID of the source that this feature came from. */
   public String getSource() {
@@ -316,6 +295,7 @@ public abstract class SourceFeature implements WithTags {
   public final long id() {
     return id;
   }
+
 
   /** Returns true if this element has any OSM relation info. */
   public boolean hasRelationInfo() {

@@ -7,13 +7,13 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryType;
 import com.onthegomap.planetiler.geo.TileCoord;
+import com.onthegomap.planetiler.geo.TileOrder;
 import com.onthegomap.planetiler.render.RenderedFeature;
 import com.onthegomap.planetiler.stats.Stats;
-import com.onthegomap.planetiler.util.CloseableConusmer;
+import com.onthegomap.planetiler.util.CloseableConsumer;
 import com.onthegomap.planetiler.util.CommonStringEncoder;
 import com.onthegomap.planetiler.util.DiskBacked;
-import com.onthegomap.planetiler.util.Hashing;
-import com.onthegomap.planetiler.util.LayerStats;
+import com.onthegomap.planetiler.util.LayerAttrStats;
 import com.onthegomap.planetiler.worker.Worker;
 import java.io.Closeable;
 import java.io.IOException;
@@ -59,29 +59,36 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
   private final CommonStringEncoder.AsByte commonLayerStrings = new CommonStringEncoder.AsByte();
   private final CommonStringEncoder commonValueStrings = new CommonStringEncoder(100_000);
   private final Stats stats;
-  private final LayerStats layerStats = new LayerStats();
+  private final LayerAttrStats layerStats = new LayerAttrStats();
+  private final PlanetilerConfig config;
   private volatile boolean prepared = false;
+  private final TileOrder tileOrder;
 
-  FeatureGroup(FeatureSort sorter, Profile profile, Stats stats) {
+
+  FeatureGroup(FeatureSort sorter, TileOrder tileOrder, Profile profile, PlanetilerConfig config, Stats stats) {
     this.sorter = sorter;
+    this.tileOrder = tileOrder;
     this.profile = profile;
+    this.config = config;
     this.stats = stats;
   }
 
   /** Returns a feature grouper that stores all feature in-memory. Only suitable for toy use-cases like unit tests. */
-  public static FeatureGroup newInMemoryFeatureGroup(Profile profile, Stats stats) {
-    return new FeatureGroup(FeatureSort.newInMemory(), profile, stats);
+  public static FeatureGroup newInMemoryFeatureGroup(TileOrder tileOrder, Profile profile, PlanetilerConfig config,
+    Stats stats) {
+    return new FeatureGroup(FeatureSort.newInMemory(), tileOrder, profile, config, stats);
   }
+
 
   /**
    * Returns a feature grouper that writes all elements to disk in chunks, sorts each chunk, then reads back in order
    * from those chunks. Suitable for making maps up to planet-scale.
    */
-  public static FeatureGroup newDiskBackedFeatureGroup(Path tempDir, Profile profile, PlanetilerConfig config,
-    Stats stats) {
+  public static FeatureGroup newDiskBackedFeatureGroup(TileOrder tileOrder, Path tempDir, Profile profile,
+    PlanetilerConfig config, Stats stats) {
     return new FeatureGroup(
       new ExternalMergeSort(tempDir, config, stats),
-      profile, stats
+      tileOrder, profile, config, stats
     );
   }
 
@@ -138,7 +145,7 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
    * Returns statistics about each layer written through {@link #newRenderedFeatureEncoder()} including min/max zoom,
    * features on elements in that layer, and their types.
    */
-  public LayerStats layerStats() {
+  public LayerAttrStats layerStats() {
     return layerStats;
   }
 
@@ -187,8 +194,9 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
   private long encodeKey(RenderedFeature feature) {
     var vectorTileFeature = feature.vectorTileFeature();
     byte encodedLayer = commonLayerStrings.encode(vectorTileFeature.layer());
+
     return encodeKey(
-      feature.tile().encoded(),
+      this.tileOrder.encode(feature.tile()),
       encodedLayer,
       feature.sortKey(),
       feature.group().isPresent()
@@ -244,7 +252,7 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
   }
 
   /** Returns a new feature writer that can be used for a single thread. */
-  public CloseableConusmer<SortableFeature> writerForThread() {
+  public CloseableConsumer<SortableFeature> writerForThread() {
     return sorter.writerForThread();
   }
 
@@ -338,17 +346,27 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
     private LongLongHashMap counts = null;
     private byte lastLayer = Byte.MAX_VALUE;
 
-    private TileFeatures(int tileCoord) {
-      this.tileCoord = TileCoord.decode(tileCoord);
+    private TileFeatures(int lastTileId) {
+      this.tileCoord = tileOrder.decode(lastTileId);
     }
 
-    private static void unscale(List<VectorTile.Feature> features) {
+    private static void unscaleAndRemovePointsOutsideBuffer(List<VectorTile.Feature> features, double maxPointBuffer) {
+      boolean checkPoints = maxPointBuffer <= 256 && maxPointBuffer >= -128;
       for (int i = 0; i < features.size(); i++) {
         var feature = features.get(i);
         if (feature != null) {
           VectorTile.VectorGeometry geometry = feature.geometry();
+          var orig = geometry;
           if (geometry.scale() != 0) {
-            features.set(i, feature.copyWithNewGeometry(geometry.unscale()));
+            geometry = geometry.unscale();
+          }
+          if (checkPoints && geometry.geomType() == GeometryType.POINT && !geometry.isEmpty()) {
+            geometry = geometry.filterPointsOutsideBuffer(maxPointBuffer);
+          }
+          if (geometry.isEmpty()) {
+            features.set(i, null);
+          } else if (geometry != orig) {
+            features.set(i, feature.copyWithNewGeometry(geometry));
           }
         }
       }
@@ -366,22 +384,6 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
 
     public TileCoord tileCoord() {
       return tileCoord;
-    }
-
-    /**
-     * Generates a hash over the feature's relevant data: layer, geometry, and attributes. The coordinates are
-     * <b>not</b> part of the hash.
-     * <p>
-     * Used as an optimization to avoid writing the same (ocean) tiles over and over again.
-     */
-    public long generateContentHash() {
-      long hash = Hashing.FNV1_64_INIT;
-      for (var feature : entries) {
-        byte layerId = extractLayerIdFromKey(feature.key());
-        hash = Hashing.fnv1a64(hash, layerId);
-        hash = Hashing.fnv1a64(hash, feature.value());
-      }
-      return hash;
     }
 
     /**
@@ -453,8 +455,8 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
       }
     }
 
-    public VectorTile getVectorTileEncoder() {
-      VectorTile encoder = new VectorTile();
+    public VectorTile getVectorTile() {
+      VectorTile tile = new VectorTile();
       List<VectorTile.Feature> items = new ArrayList<>(entries.size());
       String currentLayer = null;
       for (SortableFeature entry : entries) {
@@ -464,15 +466,15 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
         if (currentLayer == null) {
           currentLayer = layer;
         } else if (!currentLayer.equals(layer)) {
-          postProcessAndAddLayerFeatures(encoder, currentLayer, items);
+          postProcessAndAddLayerFeatures(tile, currentLayer, items);
           currentLayer = layer;
           items.clear();
         }
 
         items.add(feature);
       }
-      postProcessAndAddLayerFeatures(encoder, currentLayer, items);
-      return encoder;
+      postProcessAndAddLayerFeatures(tile, currentLayer, items);
+      return tile;
     }
 
     private void postProcessAndAddLayerFeatures(VectorTile encoder, String layer,
@@ -484,7 +486,9 @@ public final class FeatureGroup implements Iterable<FeatureGroup.TileFeatures>, 
         // lines are stored using a higher precision so that rounding does not
         // introduce artificial intersections between endpoints to confuse line merging,
         // so we have to reduce the precision here, now that line merging is done.
-        unscale(features);
+        unscaleAndRemovePointsOutsideBuffer(features, config.maxPointBuffer());
+        // also remove points more than --max-point-buffer pixels outside the tile if the
+        // user has requested a narrower buffer than the profile provides by default
       } catch (Throwable e) { // NOSONAR - OK to catch Throwable since we re-throw Errors
         // failures in tile post-processing happen very late so err on the side of caution and
         // log failures, only throwing when it's a fatal error

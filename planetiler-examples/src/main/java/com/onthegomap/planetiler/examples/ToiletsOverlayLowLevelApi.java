@@ -2,13 +2,17 @@ package com.onthegomap.planetiler.examples;
 
 import com.onthegomap.planetiler.Planetiler;
 import com.onthegomap.planetiler.Profile;
+import com.onthegomap.planetiler.archive.TileArchiveConfig;
+import com.onthegomap.planetiler.archive.TileArchiveMetadata;
+import com.onthegomap.planetiler.archive.TileArchiveWriter;
+import com.onthegomap.planetiler.archive.TileArchives;
+import com.onthegomap.planetiler.archive.WriteableTileArchive;
 import com.onthegomap.planetiler.collection.FeatureGroup;
 import com.onthegomap.planetiler.collection.LongLongMap;
 import com.onthegomap.planetiler.collection.LongLongMultimap;
 import com.onthegomap.planetiler.config.Arguments;
-import com.onthegomap.planetiler.config.MbtilesMetadata;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
-import com.onthegomap.planetiler.mbtiles.MbtilesWriter;
+import com.onthegomap.planetiler.geo.TileOrder;
 import com.onthegomap.planetiler.reader.osm.OsmInputFile;
 import com.onthegomap.planetiler.reader.osm.OsmReader;
 import com.onthegomap.planetiler.stats.Stats;
@@ -29,7 +33,7 @@ import org.slf4j.LoggerFactory;
  * <li>then build the examples: {@code mvn clean package}</li>
  * <li>then run this example:
  * {@code java -cp target/*-fatjar.jar com.onthegomap.planetiler.examples.ToiletsOverlayLowLevelApi}</li>
- * <li>then run the demo tileserver: {@code tileserver-gl-light --mbtiles=data/toilets.mbtiles}</li>
+ * <li>then run the demo tileserver: {@code tileserver-gl-light data/toilets.mbtiles}</li>
  * <li>and view the output at <a href="http://localhost:8080">localhost:8080</a></li>
  * </ol>
  */
@@ -55,7 +59,7 @@ public class ToiletsOverlayLowLevelApi {
     PlanetilerConfig config = PlanetilerConfig.from(Arguments.fromJvmProperties());
 
     // extract mbtiles metadata from profile
-    MbtilesMetadata mbtilesMetadata = new MbtilesMetadata(profile);
+    TileArchiveMetadata tileArchiveMetadata = new TileArchiveMetadata(profile, config);
 
     // overwrite output each time
     FileUtils.deleteFile(output);
@@ -73,6 +77,7 @@ public class ToiletsOverlayLowLevelApi {
      * option too.
      */
     FeatureGroup featureGroup = FeatureGroup.newDiskBackedFeatureGroup(
+      TileOrder.TMS,
       tmpDir.resolve("feature.db"),
       profile, config, stats
     );
@@ -109,7 +114,13 @@ public class ToiletsOverlayLowLevelApi {
 
     // then process rendered features, grouped by tile, encoding them into binary vector tile format
     // and writing to the output mbtiles file.
-    MbtilesWriter.writeOutput(featureGroup, output, mbtilesMetadata, config, stats);
+    var archiveConfig = TileArchiveConfig.from(output.toString());
+    try (WriteableTileArchive db = TileArchives.newWriter(archiveConfig, config)) {
+      TileArchiveWriter.writeOutput(featureGroup, db, () -> FileUtils.fileSize(output), tileArchiveMetadata,
+        archiveConfig.getLocalPath(), config, stats);
+    } catch (IOException e) {
+      throw new IllegalStateException("Unable to write to " + output, e);
+    }
 
     // dump recorded timings at the end
     stats.printSummary();

@@ -8,9 +8,10 @@ or database.
 
 Vector tiles contain raw point, line, and polygon geometries that clients like [MapLibre](https://github.com/maplibre)
 can use to render custom maps in the browser, native apps, or on a server. Planetiler packages tiles into
-an [MBTiles](https://github.com/mapbox/mbtiles-spec/blob/master/1.3/spec.md) (sqlite) file that can be served using
-tools like [TileServer GL](https://github.com/maptiler/tileserver-gl) or even
-[queried directly from the browser](https://github.com/phiresky/sql.js-httpvfs).
+an [MBTiles](https://github.com/mapbox/mbtiles-spec/blob/master/1.3/spec.md) (sqlite)
+or [PMTiles](https://github.com/protomaps/PMTiles) file that can be served using tools
+like [TileServer GL](https://github.com/maptiler/tileserver-gl) or [Martin](https://github.com/maplibre/martin) or
+even [queried directly from the browser](https://github.com/protomaps/PMTiles/tree/main/js).
 See [awesome-vector-tiles](https://github.com/mapbox/awesome-vector-tiles) for more projects that work with data in this
 format.
 
@@ -32,7 +33,7 @@ the [OpenStreetMap Americana Project](https://github.com/ZeLonewolf/openstreetma
 To generate a map of an area using the [OpenMapTiles profile](https://github.com/openmaptiles/planetiler-openmaptiles),
 you will need:
 
-- Java 16+ (see [CONTRIBUTING.md](CONTRIBUTING.md)) or [Docker](https://docs.docker.com/get-docker/)
+- Java 21+ (see [CONTRIBUTING.md](CONTRIBUTING.md)) or [Docker](https://docs.docker.com/get-docker/)
 - at least 1GB of free disk space plus 5-10x the size of the `.osm.pbf` file
 - at least 0.5x as much free RAM as the input `.osm.pbf` file size
 
@@ -87,7 +88,7 @@ Using [Node.js](https://nodejs.org/en/download/):
 
 ```bash
 npm install -g tileserver-gl-light
-tileserver-gl-light --mbtiles data/output.mbtiles
+tileserver-gl-light data/output.mbtiles
 ```
 
 Or using [Docker](https://docs.docker.com/get-docker/):
@@ -100,6 +101,8 @@ Then open http://localhost:8080 to view tiles.
 
 Some common arguments:
 
+- `--output` tells planetiler where to write output to, and what format to write it in. For
+  example `--output=australia.pmtiles` creates a pmtiles archive named `australia.pmtiles`.
 - `--download` downloads input sources automatically and `--only-download` exits after downloading
 - `--area=monaco` downloads a `.osm.pbf` extract from [Geofabrik](https://download.geofabrik.de/)
 - `--osm-path=path/to/file.osm.pbf` points Planetiler at an existing OSM extract on disk
@@ -138,9 +141,22 @@ Learn more about working with submodules [here](https://git-scm.com/book/en/v2/G
 
 See [PLANET.md](PLANET.md).
 
-## Examples
+## Generating Custom Vector Tiles
 
-See the [planetiler-examples](planetiler-examples) project.
+If you want to customize the OpenMapTiles schema or generate an mbtiles file with OpenMapTiles + extra layers, then
+fork https://github.com/openmaptiles/planetiler-openmaptiles make changes there, and run directly from that repo. It
+is a standalone Java project with a dependency on Planetiler.
+
+If you want to generate a separate mbtiles file with overlay layers or a full custom basemap, then:
+
+- For simple schemas, run a recent planetiler jar or docker image with a custom schema defined in a yaml
+  configuration file. See [planetiler-custommap](planetiler-custommap) for details.
+- For complex schemas (or if you prefer working in Java), create a new Java project
+  that [depends on Planetiler](#use-as-a-library). See the [planetiler-examples](planetiler-examples) project for a
+  working example.
+
+If you want to customize how planetiler works internally, then fork this project, build from source, and
+consider [contributing](#contributing) your change back for others to use!
 
 ## Benchmarks
 
@@ -194,10 +210,14 @@ download regularly-updated tilesets.
 
 - Supports [Natural Earth](https://www.naturalearthdata.com/),
   OpenStreetMap [.osm.pbf](https://wiki.openstreetmap.org/wiki/PBF_Format),
+  [`geopackage`](https://www.geopackage.org/),
   and [Esri Shapefiles](https://en.wikipedia.org/wiki/Shapefile) data sources
+- Writes to [MBTiles](https://github.com/mapbox/mbtiles-spec/blob/master/1.3/spec.md) or
+  or [PMTiles](https://github.com/protomaps/PMTiles) output.
 - Java-based [Profile API](planetiler-core/src/main/java/com/onthegomap/planetiler/Profile.java) to customize how source
   elements map to vector tile features, and post-process generated tiles
   using [JTS geometry utilities](https://github.com/locationtech/jts)
+- [YAML config file format](planetiler-custommap) that lets you create custom schemas without writing Java code
 - Merge nearby lines or polygons with the same tags before emitting vector tiles
 - Automatically fixes self-intersecting polygons
 - Built-in OpenMapTiles profile based on [OpenMapTiles](https://openmaptiles.org/) v3.13.1
@@ -224,19 +244,37 @@ Planetiler can be used as a maven-style dependency in a Java project using the s
 
 ### Maven
 
-Add this dependency to your java project:
+Add this repository block to your `pom.xml`:
+
+```xml
+<repositories>
+  <repository>
+    <id>osgeo</id>
+    <name>OSGeo Release Repository</name>
+    <url>https://repo.osgeo.org/repository/release/</url>
+    <snapshots>
+      <enabled>false</enabled>
+    </snapshots>
+    <releases>
+      <enabled>true</enabled>
+    </releases>
+  </repository>
+</repositories>
+```
+
+Then add the following dependency:
 
 ```xml
 <dependency>
   <groupId>com.onthegomap.planetiler</groupId>
   <artifactId>planetiler-core</artifactId>
-  <version>0.5.0</version>
+  <version>${planetiler.version}</version>
 </dependency>
 ```
 
 ### Gradle
 
-Set up your repositories block as follows:
+Set up your repositories block::
 
 ```groovy
 mavenCentral()
@@ -245,7 +283,7 @@ maven {
 }
 ```
 
-Set up your dependencies block as follows:
+Set up your dependencies block:
 
 ```groovy
 implementation 'com.onthegomap.planetiler:planetiler-core:<version>'
@@ -258,7 +296,7 @@ Pull requests are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
 ## Support
 
 For general questions, check out the #planetiler channel on [OSM-US Slack](https://osmus.slack.com/) (get an
-invite [here](https://osmus-slack.herokuapp.com/)), or start
+invite [here](https://slack.openstreetmap.us/)), or start
 a [GitHub discussion](https://github.com/onthegomap/planetiler/discussions).
 
 Found a bug or have a feature request? Open a [GitHub issue](https://github.com/onthegomap/planetiler/issues) to report.
@@ -273,7 +311,7 @@ Planetiler is made possible by these awesome open source projects:
 - [OpenMapTiles](https://openmaptiles.org/) for the [schema](https://openmaptiles.org/schema/)
   and [reference implementation](https://github.com/openmaptiles/openmaptiles)
   that
-  the [openmaptiles profile](https://github.com/openmaptiles/planetiler-openmaptiles/tree/main/src/main/java/com/onthegomap/planetiler/openmaptiles/layers)
+  the [openmaptiles profile](https://github.com/openmaptiles/planetiler-openmaptiles/tree/main/src/main/java/org/openmaptiles/layers)
   is based on
 - [Graphhopper](https://www.graphhopper.com/) for basis of utilities to process OpenStreetMap data in Java
 - [JTS Topology Suite](https://github.com/locationtech/jts) for working with vector geometries
@@ -292,6 +330,10 @@ Planetiler is made possible by these awesome open source projects:
 - [Osmosis](https://wiki.openstreetmap.org/wiki/Osmosis) for Java utilities to parse OpenStreetMap data
 - [JNR-FFI](https://github.com/jnr/jnr-ffi) for utilities to access low-level system utilities to improve memory-mapped
   file performance.
+- [cel-java](https://github.com/projectnessie/cel-java) for the Java implementation of
+  Google's [Common Expression Language](https://github.com/google/cel-spec) that powers dynamic expressions embedded in
+  schema config files.
+- [PMTiles](https://github.com/protomaps/PMTiles) optimized tile storage format
 
 See [NOTICE.md](NOTICE.md) for a full list and license details.
 

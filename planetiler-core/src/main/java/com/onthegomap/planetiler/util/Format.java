@@ -8,6 +8,8 @@ import java.util.NavigableMap;
 import java.util.TreeMap;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
+import java.util.stream.Collectors;
+import java.util.stream.DoubleStream;
 import org.apache.commons.text.StringEscapeUtils;
 import org.locationtech.jts.geom.Coordinate;
 
@@ -17,32 +19,10 @@ import org.locationtech.jts.geom.Coordinate;
 public class Format {
 
   public static final Locale DEFAULT_LOCALE = Locale.getDefault(Locale.Category.FORMAT);
-  public static final ConcurrentMap<Locale, Format> instances = new ConcurrentHashMap<>();
-  private final NumberFormat pf;
-  private final NumberFormat nf;
-  private final NumberFormat intF;
 
-  private Format(Locale locale) {
-    pf = NumberFormat.getPercentInstance(locale);
-    pf.setMaximumFractionDigits(0);
-    nf = NumberFormat.getNumberInstance(locale);
-    nf.setMaximumFractionDigits(1);
-    intF = NumberFormat.getNumberInstance(locale);
-    intF.setMaximumFractionDigits(0);
-  }
-
-  public static Format forLocale(Locale locale) {
-    Format format = instances.get(locale);
-    if (format == null) {
-      format = instances.computeIfAbsent(locale, Format::new);
-    }
-    return format;
-  }
-
-  public static Format defaultInstance() {
-    return forLocale(DEFAULT_LOCALE);
-  }
-
+  private static final ConcurrentMap<Locale, Format> instances = new ConcurrentHashMap<>();
+  @SuppressWarnings("java:S5164")
+  private static final NumberFormat latLonNF = NumberFormat.getIntegerInstance(Locale.US);
   private static final NavigableMap<Long, String> STORAGE_SUFFIXES = new TreeMap<>(Map.ofEntries(
     Map.entry(1_000L, "k"),
     Map.entry(1_000_000L, "M"),
@@ -58,6 +38,53 @@ public class Format {
     Map.entry(1_000_000_000_000_000L, "Q")
   ));
 
+  static {
+    latLonNF.setMaximumFractionDigits(5);
+    latLonNF.setGroupingUsed(false);
+  }
+
+  // `NumberFormat` instances are not thread safe, so we need to wrap them inside a `ThreadLocal`.
+  //
+  // Ignore warnings about not removing thread local values since planetiler uses dedicated worker threads that release
+  // values when a task is finished and are not re-used.
+  @SuppressWarnings("java:S5164")
+  private final ThreadLocal<NumberFormat> pf;
+  @SuppressWarnings("java:S5164")
+  private final ThreadLocal<NumberFormat> nf;
+  @SuppressWarnings("java:S5164")
+  private final ThreadLocal<NumberFormat> intF;
+
+  private Format(Locale locale) {
+    pf = ThreadLocal.withInitial(() -> {
+      var f = NumberFormat.getPercentInstance(locale);
+      f.setMaximumFractionDigits(0);
+      return f;
+    });
+    nf = ThreadLocal.withInitial(() -> {
+      var f = NumberFormat.getNumberInstance(locale);
+      f.setMaximumFractionDigits(1);
+      return f;
+    });
+    intF = ThreadLocal.withInitial(() -> {
+      var f = NumberFormat.getNumberInstance(locale);
+      f.setMaximumFractionDigits(0);
+      return f;
+    });
+  }
+
+  /** Returns a string with {@code items} rounded to 5 decimals and joined with a comma. */
+  public static synchronized String joinCoordinates(double... items) {
+    return DoubleStream.of(items).mapToObj(latLonNF::format).collect(Collectors.joining(","));
+  }
+
+  public static Format forLocale(Locale locale) {
+    return instances.computeIfAbsent(locale, Format::new);
+  }
+
+  public static Format defaultInstance() {
+    return forLocale(DEFAULT_LOCALE);
+  }
+
   public static String padRight(String str, int size) {
     StringBuilder strBuilder = new StringBuilder(str);
     while (strBuilder.length() < size) {
@@ -72,6 +99,23 @@ public class Format {
       strBuilder.insert(0, " ");
     }
     return strBuilder.toString();
+  }
+
+  /** Returns Java code that can re-create {@code string}: {@code null} if null, or {@code "contents"} if not empty. */
+  public static String quote(Object string) {
+    if (string == null) {
+      return "null";
+    }
+    return '"' + StringEscapeUtils.escapeJava(string.toString()) + '"';
+  }
+
+  /** Returns an openstreetmap.org map link for a lat/lon */
+  public static String osmDebugUrl(int zoom, Coordinate coord) {
+    return "https://www.openstreetmap.org/#map=%d/%.5f/%.5f".formatted(
+      zoom,
+      coord.y,
+      coord.x
+    );
   }
 
   /** Returns a number of bytes formatted like "123" "1.2k" "240M", etc. */
@@ -117,17 +161,17 @@ public class Format {
 
   /** Returns 0.0-1.0 as a "0%" - "100%" with no decimal points. */
   public String percent(double value) {
-    return pf.format(value);
+    return pf.get().format(value);
   }
 
   /** Returns a number formatted with 1 decimal point. */
   public String decimal(double value) {
-    return nf.format(value);
+    return nf.get().format(value);
   }
 
   /** Returns a number formatted with 0 decimal points. */
   public String integer(Number value) {
-    return intF.format(value);
+    return intF.get().format(value);
   }
 
   /** Returns a duration formatted as fractional seconds with 1 decimal point. */
@@ -146,22 +190,5 @@ public class Format {
       simplified = Duration.ofSeconds(Math.round(seconds));
     }
     return simplified.toString().replace("PT", "").toLowerCase(Locale.ROOT);
-  }
-
-  /** Returns Java code that can re-create {@code string}: {@code null} if null, or {@code "contents"} if not empty. */
-  public static String quote(Object string) {
-    if (string == null) {
-      return "null";
-    }
-    return '"' + StringEscapeUtils.escapeJava(string.toString()) + '"';
-  }
-
-  /** Returns an openstreetmap.org map link for a lat/lon */
-  public static String osmDebugUrl(int zoom, Coordinate coord) {
-    return "https://www.openstreetmap.org/#map=%d/%.5f/%.5f".formatted(
-      zoom,
-      coord.y,
-      coord.x
-    );
   }
 }

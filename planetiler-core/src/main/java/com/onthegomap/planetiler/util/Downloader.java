@@ -3,6 +3,7 @@ package com.onthegomap.planetiler.util;
 import static com.google.common.net.HttpHeaders.*;
 import static java.nio.file.StandardOpenOption.WRITE;
 
+import com.google.common.util.concurrent.RateLimiter;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.stats.ProgressLoggers;
 import com.onthegomap.planetiler.stats.Stats;
@@ -11,7 +12,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.io.UncheckedIOException;
 import java.net.URI;
-import java.net.URL;
 import java.net.URLConnection;
 import java.net.http.HttpClient;
 import java.net.http.HttpHeaders;
@@ -58,8 +58,9 @@ import org.slf4j.LoggerFactory;
  * a {@code .osm.pbf} download URL in the <a href="https://download.geofabrik.de/technical.html">Geofabrik JSON
  * index</a>.
  * <p>
- * You can also use "aws:latest" to download the latest {@code planet.osm.pbf} file from the
- * <a href="https://registry.opendata.aws/osm/">AWS Open Data Registry</a>.
+ * Use "aws:latest" to download the latest {@code planet.osm.pbf} file from the
+ * <a href="https://registry.opendata.aws/osm/">AWS Open Data Registry</a>, or "overture:latest" to download the latest
+ * <a href="https://overturemaps.org/">Overture Maps Foundation</a> release.
  */
 @SuppressWarnings("UnusedReturnValue")
 public class Downloader {
@@ -75,8 +76,10 @@ public class Downloader {
   private final Stats stats;
   private final long chunkSizeBytes;
   private final ResourceUsage diskSpaceCheck = new ResourceUsage("download");
+  private final RateLimiter rateLimiter;
 
   Downloader(PlanetilerConfig config, Stats stats, long chunkSizeBytes) {
+    this.rateLimiter = config.downloadMaxBandwidth() == 0 ? null : RateLimiter.create(config.downloadMaxBandwidth());
     this.chunkSizeBytes = chunkSizeBytes;
     this.config = config;
     this.stats = stats;
@@ -95,7 +98,7 @@ public class Downloader {
   }
 
   private static URLConnection getUrlConnection(String urlString, PlanetilerConfig config) throws IOException {
-    var url = new URL(urlString);
+    var url = URI.create(urlString).toURL();
     var connection = url.openConnection();
     connection.setConnectTimeout((int) config.httpTimeout().toMillis());
     connection.setReadTimeout((int) config.httpTimeout().toMillis());
@@ -137,10 +140,10 @@ public class Downloader {
    * {@code HEAD} request to the resource.
    *
    * @param id     short name to use for this download when logging progress
-   * @param url    the external resource to fetch, "aws:latest" (for the latest planet .osm.pbf), or "geofabrik:extract
-   *               name" as a shortcut to use {@link Geofabrik#getDownloadUrl(String, PlanetilerConfig)} to look up a
-   *               {@code .osm.pbf} <a href="https://download.geofabrik.de/">Geofabrik</a> extract URL by partial match
-   *               on area name
+   * @param url    the external resource to fetch, "aws:latest" (for the latest planet .osm.pbf), "overture:latest" (for
+   *               the latest Overture Maps release) or "geofabrik:extract-name" as a shortcut to use
+   *               {@link Geofabrik#getDownloadUrl(String, PlanetilerConfig)} to look up a {@code .osm.pbf}
+   *               <a href="https://download.geofabrik.de/">Geofabrik</a> extract URL by partial match on area name
    * @param output where to download the file to
    * @return {@code this} for chaining
    */
@@ -148,7 +151,9 @@ public class Downloader {
     if (url.startsWith("geofabrik:")) {
       url = Geofabrik.getDownloadUrl(url.replaceFirst("^geofabrik:", ""), config);
     } else if (url.startsWith("aws:")) {
-      url = AwsOsm.getDownloadUrl(url.replaceFirst("^aws:", ""), config);
+      url = AwsOsm.OSM_PDS.getDownloadUrl(url.replaceFirst("^aws:", ""), config);
+    } else if (url.startsWith("overture:")) {
+      url = AwsOsm.OVERTURE.getDownloadUrl(url.replaceFirst("^overture:", ""), config);
     }
     toDownloadList.add(new ResourceToDownload(id, url, output));
     return this;
@@ -304,7 +309,7 @@ public class Downloader {
               try (
                 var inputStream = (ranges || range.start > 0) ? openStreamRange(canonicalUrl, range.start, range.end) :
                   openStream(canonicalUrl);
-                var input = new ProgressChannel(Channels.newChannel(inputStream), resource.progress)
+                var input = new ProgressChannel(Channels.newChannel(inputStream), resource.progress, rateLimiter)
               ) {
                 // ensure this file has been allocated up to the start of this block
                 fileChannel.write(ByteBuffer.allocate(1), range.start);
@@ -355,12 +360,16 @@ public class Downloader {
   /**
    * Wrapper for a {@link ReadableByteChannel} that captures progress information.
    */
-  private record ProgressChannel(ReadableByteChannel inner, AtomicLong progress) implements ReadableByteChannel {
+  private record ProgressChannel(ReadableByteChannel inner, AtomicLong progress, RateLimiter rateLimiter)
+    implements ReadableByteChannel {
 
     @Override
     public int read(ByteBuffer dst) throws IOException {
       int n = inner.read(dst);
       if (n > 0) {
+        if (rateLimiter != null) {
+          rateLimiter.acquire(n);
+        }
         progress.addAndGet(n);
       }
       return n;

@@ -18,7 +18,7 @@ jobs:
     steps:
       # report status back to pull request
       - uses: haya14busa/action-workflow_run-status@v1
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
         with:
           submodules: true
       - name: 'Download branch build info'
@@ -28,7 +28,6 @@ jobs:
           run_id: ${{ github.event.workflow_run.id }}
           name: build-info
           path: build-info
-          repo: onthegomap/planetiler
       - name: 'Get build info'
         id: build_info
         run: echo "::set-output name=pr_number::$(cat build-info/pull_request_number)"

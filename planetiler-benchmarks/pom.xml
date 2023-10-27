@@ -9,19 +9,19 @@
   <parent>
     <groupId>com.onthegomap.planetiler</groupId>
     <artifactId>planetiler-parent</artifactId>
-    <version>0.5-SNAPSHOT</version>
+    <version>${revision}</version>
   </parent>
 
   <dependencies>
     <dependency>
       <groupId>com.onthegomap.planetiler</groupId>
       <artifactId>planetiler-core</artifactId>
-      <version>${project.parent.version}</version>
+      <version>${revision}</version>
     </dependency>
     <dependency>
-      <groupId>com.onthegomap.planetiler</groupId>
+      <groupId>org.openmaptiles</groupId>
       <artifactId>planetiler-openmaptiles</artifactId>
-      <version>${project.parent.version}</version>
+      <version>${revision}</version>
     </dependency>
   </dependencies>
 
@@ -30,7 +30,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-assembly-plugin</artifactId>
-        <version>3.4.2</version>
+        <version>3.6.0</version>
         <!-- for with-deps assembly descriptor -->
         <dependencies>
           <dependency>
