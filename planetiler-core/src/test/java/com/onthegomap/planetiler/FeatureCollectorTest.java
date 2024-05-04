@@ -86,6 +86,17 @@ class FeatureCollectorTest {
   }
 
   @Test
+  void testOmit() {
+    var collector = factory.get(newReaderFeature(newPoint(0, 0), Map.of(
+      "key", "val"
+    )));
+    var point = collector.point("layername");
+    assertFeatures(14, List.of(Map.of("_layer", "layername")), collector);
+    point.omit();
+    assertFeatures(14, List.of(), collector);
+  }
+
+  @Test
   void testAttrWithMinzoom() {
     var collector = factory.get(newReaderFeature(newPoint(0, 0), Map.of(
       "key", "val"
@@ -494,6 +505,34 @@ class FeatureCollectorTest {
   }
 
   @Test
+  void testInnermostPoint() {
+    /*
+      _____
+     | · __|
+     |__|
+     */
+    var sourceLine = newReaderFeature(newPolygon(worldToLatLon(
+      0, 0,
+      1, 0,
+      1, 0.5,
+      0.5, 0.5,
+      0.5, 1,
+      0, 1,
+      0, 0
+    )), Map.of());
+
+    var fc = factory.get(sourceLine);
+    fc.innermostPoint("layer").setZoomRange(0, 10);
+    var iter = fc.iterator();
+
+    var item = iter.next();
+    assertEquals(GeometryType.POINT, item.getGeometryType());
+    assertEquals(round(newPoint(0.28, 0.28)), round(item.getGeometry(), 1e2));
+
+    assertFalse(iter.hasNext());
+  }
+
+  @Test
   void testMultiPolygonCoercion() throws GeometryException {
     var sourceLine = newReaderFeature(newMultiPolygon(
       newPolygon(worldToLatLon(
@@ -614,5 +653,4 @@ class FeatureCollectorTest {
       )
     ), collector);
   }
-
 }

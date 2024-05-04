@@ -1,10 +1,6 @@
 package com.onthegomap.planetiler.stream;
 
-import com.fasterxml.jackson.annotation.JsonCreator;
-import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.fasterxml.jackson.annotation.JsonInclude.Include;
-import com.fasterxml.jackson.annotation.JsonIncludeProperties;
-import com.fasterxml.jackson.annotation.JsonProperty;
 import com.fasterxml.jackson.annotation.JsonSubTypes;
 import com.fasterxml.jackson.annotation.JsonSubTypes.Type;
 import com.fasterxml.jackson.annotation.JsonTypeInfo;
@@ -16,7 +12,6 @@ import com.onthegomap.planetiler.archive.TileArchiveConfig;
 import com.onthegomap.planetiler.archive.TileArchiveMetadata;
 import com.onthegomap.planetiler.archive.TileEncodingResult;
 import com.onthegomap.planetiler.geo.TileCoord;
-import com.onthegomap.planetiler.util.LayerAttrStats;
 import java.io.BufferedOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
@@ -27,8 +22,6 @@ import java.nio.file.Path;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Objects;
-import org.locationtech.jts.geom.CoordinateXY;
-import org.locationtech.jts.geom.Envelope;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -51,9 +44,6 @@ public final class WriteableJsonStreamArchive extends WriteableStreamArchive {
   static final JsonMapper jsonMapper = JsonMapper.builder()
     .serializationInclusion(Include.NON_ABSENT)
     .addModule(new Jdk8Module())
-    .addMixIn(TileArchiveMetadata.class, TileArchiveMetadataMixin.class)
-    .addMixIn(Envelope.class, EnvelopeMixin.class)
-    .addMixIn(CoordinateXY.class, CoordinateXYMixin.class)
     .build();
 
   private final boolean writeTilesOnly;
@@ -76,11 +66,11 @@ public final class WriteableJsonStreamArchive extends WriteableStreamArchive {
   }
 
   @Override
-  public void initialize(TileArchiveMetadata metadata) {
+  public void initialize() {
     if (writeTilesOnly) {
       return;
     }
-    writeEntryFlush(new InitializationEntry(metadata));
+    writeEntryFlush(new InitializationEntry());
   }
 
   @Override
@@ -204,30 +194,9 @@ public final class WriteableJsonStreamArchive extends WriteableStreamArchive {
     }
   }
 
-  record InitializationEntry(TileArchiveMetadata metadata) implements Entry {}
+  record InitializationEntry() implements Entry {}
 
 
   record FinishEntry(TileArchiveMetadata metadata) implements Entry {}
 
-  private interface TileArchiveMetadataMixin {
-
-    @JsonIgnore(false)
-    Envelope bounds();
-
-    @JsonIgnore(false)
-    CoordinateXY center();
-
-    @JsonIgnore(false)
-    List<LayerAttrStats.VectorLayer> vectorLayers();
-  }
-
-  @JsonIncludeProperties({"minX", "maxX", "minY", "maxY"})
-  private abstract static class EnvelopeMixin {
-    @JsonCreator
-    EnvelopeMixin(@JsonProperty("minX") double minX, @JsonProperty("maxX") double maxX,
-      @JsonProperty("minY") double minY, @JsonProperty("maxY") double maxY) {}
-  }
-
-  @JsonIncludeProperties({"x", "y"})
-  private interface CoordinateXYMixin {}
 }

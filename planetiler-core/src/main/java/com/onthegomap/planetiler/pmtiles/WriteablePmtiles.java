@@ -10,6 +10,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.geo.TileOrder;
+import com.onthegomap.planetiler.util.FileUtils;
 import com.onthegomap.planetiler.util.Format;
 import com.onthegomap.planetiler.util.Gzip;
 import com.onthegomap.planetiler.util.SeekableInMemoryByteChannel;
@@ -23,10 +24,11 @@ import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
 import java.util.OptionalLong;
+import java.util.TreeMap;
+import java.util.function.LongSupplier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -47,9 +49,12 @@ public final class WriteablePmtiles implements WriteableTileArchive {
   private long numAddressedTiles = 0;
   private boolean isClustered = true;
 
-  private WriteablePmtiles(SeekableByteChannel channel) throws IOException {
+  private final LongSupplier bytesWritten;
+
+  private WriteablePmtiles(SeekableByteChannel channel, LongSupplier bytesWritten) throws IOException {
     this.out = channel;
     out.write(ByteBuffer.allocate(INIT_SECTION));
+    this.bytesWritten = bytesWritten;
   }
 
   private static Directories makeDirectoriesWithLeaves(List<Pmtiles.Entry> subEntries, int leafSize, int attemptNum)
@@ -114,11 +119,13 @@ public final class WriteablePmtiles implements WriteableTileArchive {
 
   public static WriteablePmtiles newWriteToFile(Path path) throws IOException {
     return new WriteablePmtiles(
-      FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE));
+      FileChannel.open(path, StandardOpenOption.CREATE, StandardOpenOption.READ, StandardOpenOption.WRITE),
+      () -> FileUtils.size(path)
+    );
   }
 
   public static WriteablePmtiles newWriteToMemory(SeekableInMemoryByteChannel bytes) throws IOException {
-    return new WriteablePmtiles(bytes);
+    return new WriteablePmtiles(bytes, () -> 0);
   }
 
   @Override
@@ -140,7 +147,8 @@ public final class WriteablePmtiles implements WriteableTileArchive {
     }
     try {
       Directories directories = makeDirectories(entries);
-      var otherMetadata = new LinkedHashMap<>(tileArchiveMetadata.toMap());
+      // use treemap to ensure consistent ouput between runs
+      var otherMetadata = new TreeMap<>(tileArchiveMetadata.toMap());
 
       // exclude keys included in top-level header
       otherMetadata.remove(TileArchiveMetadata.CENTER_KEY);
@@ -199,8 +207,8 @@ public final class WriteablePmtiles implements WriteableTileArchive {
         (int) (bounds.getMaxX() * 10_000_000),
         (int) (bounds.getMaxY() * 10_000_000),
         (byte) zoom,
-        (int) center.x * 10_000_000,
-        (int) center.y * 10_000_000
+        (int) (center.x * 10_000_000),
+        (int) (center.y * 10_000_000)
       );
 
       LOGGER.info("Writing metadata and leaf directories...");
@@ -236,6 +244,11 @@ public final class WriteablePmtiles implements WriteableTileArchive {
     } catch (IOException e) {
       LOGGER.error(e.getMessage());
     }
+  }
+
+  @Override
+  public long bytesWritten() {
+    return bytesWritten.getAsLong();
   }
 
   @Override

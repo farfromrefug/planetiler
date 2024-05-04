@@ -3,7 +3,12 @@ package com.onthegomap.planetiler.archive;
 import static com.onthegomap.planetiler.util.LanguageUtils.nullIfEmpty;
 
 import com.onthegomap.planetiler.config.Arguments;
+import com.onthegomap.planetiler.files.FilesArchiveUtils;
+import com.onthegomap.planetiler.geo.TileOrder;
+import com.onthegomap.planetiler.stream.StreamArchiveUtils;
 import com.onthegomap.planetiler.util.FileUtils;
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.net.URI;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
@@ -11,6 +16,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * Definition for a tileset, parsed from a URI-like string.
@@ -38,6 +44,12 @@ public record TileArchiveConfig(
   URI uri,
   Map<String, String> options
 ) {
+
+  // be more generous and encode some characters for the users
+  private static final Map<String, String> URI_ENCODINGS = Map.of(
+    "{", "%7B",
+    "}", "%7D"
+  );
 
   private static TileArchiveConfig.Scheme getScheme(URI uri) {
     String scheme = uri.getScheme();
@@ -77,18 +89,20 @@ public record TileArchiveConfig(
 
   private static TileArchiveConfig.Format getFormat(URI uri) {
     String format = parseQuery(uri).get("format");
-    if (format == null) {
-      format = getExtension(uri);
-    }
-    if (format == null) {
-      return TileArchiveConfig.Format.MBTILES;
-    }
     for (var value : TileArchiveConfig.Format.values()) {
-      if (value.id().equals(format)) {
+      if (value.isQueryFormatSupported(format)) {
         return value;
       }
     }
-    throw new IllegalArgumentException("Unsupported format " + format + " from " + uri);
+    if (format != null) {
+      throw new IllegalArgumentException("Unsupported format " + format + " from " + uri);
+    }
+    for (var value : TileArchiveConfig.Format.values()) {
+      if (value.isUriSupported(uri)) {
+        return value;
+      }
+    }
+    throw new IllegalArgumentException("Unsupported format " + getExtension(uri) + " from " + uri);
   }
 
   /**
@@ -103,6 +117,10 @@ public record TileArchiveConfig(
         string += "?" + parts[1];
       }
     }
+    for (Map.Entry<String, String> uriEncoding : URI_ENCODINGS.entrySet()) {
+      string = string.replace(uriEncoding.getKey(), uriEncoding.getValue());
+    }
+
     return from(URI.create(string));
   }
 
@@ -111,7 +129,11 @@ public record TileArchiveConfig(
    */
   public static TileArchiveConfig from(URI uri) {
     if (uri.getScheme() == null) {
-      String base = Path.of(uri.getPath()).toAbsolutePath().toUri().normalize().toString();
+      final String path = uri.getPath();
+      String base = Path.of(path).toAbsolutePath().toUri().normalize().toString();
+      if (path.endsWith("/")) {
+        base = base + "/";
+      }
       if (uri.getRawQuery() != null) {
         base += "?" + uri.getRawQuery();
       }
@@ -133,13 +155,24 @@ public record TileArchiveConfig(
     return scheme == Scheme.FILE ? Path.of(URI.create(uri.toString().replaceAll("\\?.*$", ""))) : null;
   }
 
+  /**
+   * Returns the local <b>base</b> path for this archive, for which directories should be pre-created for.
+   */
+  public Path getLocalBasePath() {
+    Path p = getLocalPath();
+    if (format() == Format.FILES) {
+      p = FilesArchiveUtils.cleanBasePath(p);
+    }
+    return p;
+  }
+
 
   /**
    * Deletes the archive if possible.
    */
   public void delete() {
     if (scheme == Scheme.FILE) {
-      FileUtils.delete(getLocalPath());
+      FileUtils.delete(getLocalBasePath());
     }
   }
 
@@ -147,7 +180,30 @@ public record TileArchiveConfig(
    * Returns {@code true} if the archive already exists, {@code false} otherwise.
    */
   public boolean exists() {
-    return getLocalPath() != null && Files.exists(getLocalPath());
+    return exists(getLocalBasePath());
+  }
+
+  /**
+   * @param p path to the archive
+   * @return {@code true} if the archive already exists, {@code false} otherwise.
+   */
+  public boolean exists(Path p) {
+    if (p == null) {
+      return false;
+    }
+    if (format() != Format.FILES) {
+      return Files.exists(p);
+    } else {
+      if (!Files.exists(p)) {
+        return false;
+      }
+      // file-archive exists only if it has any contents
+      try (Stream<Path> paths = Files.list(p)) {
+        return paths.findAny().isPresent();
+      } catch (IOException e) {
+        throw new UncheckedIOException(e);
+      }
+    }
   }
 
   /**
@@ -165,30 +221,54 @@ public record TileArchiveConfig(
     return Arguments.of(options).orElse(arguments.withPrefix(format.id));
   }
 
+  public Path getPathForMultiThreadedWriter(int index) {
+    return switch (format) {
+      case CSV, TSV, JSON, PROTO, PBF -> StreamArchiveUtils.constructIndexedPath(getLocalPath(), index);
+      case FILES -> getLocalPath();
+      default -> throw new UnsupportedOperationException("not supported by " + format);
+    };
+  }
+
   public enum Format {
     MBTILES("mbtiles",
       false /* TODO mbtiles could support append in the future by using insert statements with an "on conflict"-clause (i.e. upsert) and by creating tables only if they don't exist, yet */,
-      false),
-    PMTILES("pmtiles", false, false),
+      false, TileOrder.TMS),
+    PMTILES("pmtiles", false, false, TileOrder.HILBERT),
 
-    CSV("csv", true, true),
+    // should be before PBF in order to avoid collisions
+    FILES("files", true, true, TileOrder.TMS) {
+      @Override
+      boolean isUriSupported(URI uri) {
+        final String path = uri.getPath();
+        return path != null && (path.endsWith("/") || path.contains("{") /* template string */ ||
+          !path.contains(".") /* no extension => assume files */);
+      }
+    },
+
+    CSV("csv", true, true, TileOrder.TMS),
     /** identical to {@link Format#CSV} - except for the column separator */
-    TSV("tsv", true, true),
+    TSV("tsv", true, true, TileOrder.TMS),
 
-    PROTO("proto", true, true),
+    PROTO("proto", true, true, TileOrder.TMS),
     /** identical to {@link Format#PROTO} */
-    PBF("pbf", true, true),
+    PBF("pbf", true, true, TileOrder.TMS),
 
-    JSON("json", true, true);
+    JSON("json", true, true, TileOrder.TMS);
 
     private final String id;
     private final boolean supportsAppend;
     private final boolean supportsConcurrentWrites;
+    private final TileOrder order;
 
-    Format(String id, boolean supportsAppend, boolean supportsConcurrentWrites) {
+    Format(String id, boolean supportsAppend, boolean supportsConcurrentWrites, TileOrder order) {
       this.id = id;
       this.supportsAppend = supportsAppend;
       this.supportsConcurrentWrites = supportsConcurrentWrites;
+      this.order = order;
+    }
+
+    public TileOrder preferredOrder() {
+      return order;
     }
 
     public String id() {
@@ -201,6 +281,15 @@ public record TileArchiveConfig(
 
     public boolean supportsConcurrentWrites() {
       return supportsConcurrentWrites;
+    }
+
+    boolean isUriSupported(URI uri) {
+      final String path = uri.getPath();
+      return path != null && path.endsWith("." + id);
+    }
+
+    boolean isQueryFormatSupported(String queryFormat) {
+      return id.equals(queryFormat);
     }
   }
 

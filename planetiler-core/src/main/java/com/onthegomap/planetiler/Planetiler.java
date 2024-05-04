@@ -20,7 +20,6 @@ import com.onthegomap.planetiler.reader.osm.PolyFileReader;
 import com.onthegomap.planetiler.stats.ProcessInfo;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.stats.Timers;
-import com.onthegomap.planetiler.stream.StreamArchiveUtils;
 import com.onthegomap.planetiler.util.AnsiColors;
 import com.onthegomap.planetiler.util.BuildInfo;
 import com.onthegomap.planetiler.util.ByteBufferUtil;
@@ -85,6 +84,7 @@ public class Planetiler {
   private final Path multipolygonPath;
   private final Path featureDbPath;
   private final boolean downloadSources;
+  private final boolean refreshSources;
   private final boolean onlyDownloadSources;
   private final boolean parseNodeBounds;
   private Profile profile = null;
@@ -119,6 +119,8 @@ public class Planetiler {
     tmpDir = config.tmpDir();
     onlyDownloadSources = arguments.getBoolean("only_download", "download source data then exit", false);
     downloadSources = onlyDownloadSources || arguments.getBoolean("download", "download sources", false);
+    refreshSources =
+      arguments.getBoolean("refresh_sources", "download new version of source files if they have changed", false);
     fetchOsmTileStats =
       arguments.getBoolean("download_osm_tile_weights", "download OSM tile weights file", downloadSources);
     nodeDbPath = arguments.file("temp_nodes", "temp node db location", tmpDir.resolve("node.db"));
@@ -684,15 +686,15 @@ public class Planetiler {
         throw new IllegalArgumentException(output.format() + " doesn't support concurrent writes");
       }
       IntStream.range(1, config.tileWriteThreads())
-        .mapToObj(index -> StreamArchiveUtils.constructIndexedPath(output.getLocalPath(), index))
+        .mapToObj(output::getPathForMultiThreadedWriter)
         .forEach(p -> {
           if (!config.append() && (overwrite || config.force())) {
             FileUtils.delete(p);
           }
-          if (config.append() && !Files.exists(p)) {
-            throw new IllegalArgumentException("indexed file \"" + p + "\" must exist when appending");
-          } else if (!config.append() && Files.exists(p)) {
-            throw new IllegalArgumentException("indexed file \"" + p + "\" must not exist when not appending");
+          if (config.append() && !output.exists(p)) {
+            throw new IllegalArgumentException("indexed archive \"" + p + "\" must exist when appending");
+          } else if (!config.append() && output.exists(p)) {
+            throw new IllegalArgumentException("indexed archive \"" + p + "\" must not exist when not appending");
           }
         });
     }
@@ -720,7 +722,7 @@ public class Planetiler {
     // in case any temp files are left from a previous run...
     FileUtils.delete(tmpDir, nodeDbPath, featureDbPath, multipolygonPath);
     Files.createDirectories(tmpDir);
-    FileUtils.createParentDirectories(nodeDbPath, featureDbPath, multipolygonPath, output.getLocalPath());
+    FileUtils.createParentDirectories(nodeDbPath, featureDbPath, multipolygonPath, output.getLocalBasePath());
 
     if (!toDownload.isEmpty()) {
       download();
@@ -758,7 +760,7 @@ public class Planetiler {
       stats.monitorFile("nodes", nodeDbPath);
       stats.monitorFile("features", featureDbPath);
       stats.monitorFile("multipolygons", multipolygonPath);
-      stats.monitorFile("archive", output.getLocalPath());
+      stats.monitorFile("archive", output.getLocalPath(), archive::bytesWritten);
 
       for (Stage stage : stages) {
         stage.task.run();
@@ -775,8 +777,8 @@ public class Planetiler {
 
       featureGroup.prepare();
 
-      TileArchiveWriter.writeOutput(featureGroup, archive, output::size, tileArchiveMetadata, layerStatsPath, config,
-        stats);
+      TileArchiveWriter.writeOutput(featureGroup, archive, archive::bytesWritten, tileArchiveMetadata, layerStatsPath,
+        config, stats);
     } catch (IOException e) {
       throw new IllegalStateException("Unable to write to " + output, e);
     }
@@ -893,11 +895,13 @@ public class Planetiler {
 
   private Path getPath(String name, String type, Path defaultPath, String defaultUrl) {
     Path path = arguments.file(name + "_path", name + " " + type + " path", defaultPath);
+    boolean refresh =
+      arguments.getBoolean("refresh_" + name, "Download new version of " + name + " if changed", refreshSources);
     boolean freeAfterReading = arguments.getBoolean("free_" + name + "_after_read",
       "delete " + name + " input file after reading to make space for output (reduces peak disk usage)", false);
-    if (downloadSources) {
+    if (downloadSources || refresh) {
       String url = arguments.getString(name + "_url", name + " " + type + " url", defaultUrl);
-      if (!Files.exists(path) && url != null) {
+      if ((!Files.exists(path) || refresh) && url != null) {
         toDownload.add(new ToDownload(name, url, path));
       }
     }
@@ -907,7 +911,7 @@ public class Planetiler {
 
   private void download() {
     var timer = stats.startStage("download");
-    Downloader downloader = Downloader.create(config(), stats());
+    Downloader downloader = Downloader.create(config());
     for (ToDownload toDownload : toDownload) {
       if (profile.caresAboutSource(toDownload.id)) {
         downloader.add(toDownload.id, toDownload.url, toDownload.path);
@@ -920,7 +924,7 @@ public class Planetiler {
   private void ensureInputFilesExist() {
     for (InputPath inputPath : inputPaths) {
       if (profile.caresAboutSource(inputPath.id) && !Files.exists(inputPath.path)) {
-        throw new IllegalArgumentException(inputPath.path + " does not exist");
+        throw new IllegalArgumentException(inputPath.path + " does not exist. Run with --download to fetch it");
       }
     }
   }

@@ -41,6 +41,7 @@ public record PlanetilerConfig(
   String httpUserAgent,
   Duration httpTimeout,
   int httpRetries,
+  Duration httpRetryWait,
   long downloadChunkSizeMB,
   int downloadThreads,
   double downloadMaxBandwidth,
@@ -58,7 +59,8 @@ public record PlanetilerConfig(
   String debugUrlPattern,
   Path tmpDir,
   Path tileWeights,
-  double maxPointBuffer
+  double maxPointBuffer,
+  boolean logJtsExceptions
 ) {
 
   public static final int MIN_MINZOOM = 0;
@@ -104,7 +106,7 @@ public record PlanetilerConfig(
         Math.max(1, (threads - 16) / 32 + 1));
     int featureProcessThreads =
       arguments.getInteger("process_threads", "number of threads to use when processing input features",
-        Math.max(threads < 4 ? threads : (threads - featureWriteThreads), 1));
+        Math.max(threads < 8 ? threads : (threads - featureWriteThreads), 1));
     Bounds bounds = new Bounds(arguments.bounds("bounds", "bounds"));
     Path polygonFile =
       arguments.file("polygon", "a .poly file that limits output to tiles intersecting the shape", null);
@@ -165,6 +167,7 @@ public record PlanetilerConfig(
         "Planetiler downloader (https://github.com/onthegomap/planetiler)"),
       arguments.getDuration("http_timeout", "Timeout to use when downloading files over HTTP", "30s"),
       arguments.getInteger("http_retries", "Retries to use when downloading files over HTTP", 1),
+      arguments.getDuration("http_retry_wait", "How long to wait before retrying HTTP request", "5s"),
       arguments.getLong("download_chunk_size_mb", "Size of file chunks to download in parallel in megabytes", 100),
       arguments.getInteger("download_threads", "Number of parallel threads to use when downloading each file", 1),
       Parse.bandwidth(arguments.getString("download_max_bandwidth",
@@ -208,7 +211,8 @@ public record PlanetilerConfig(
         "Max tile pixels to include points outside tile bounds. Set to a lower value to reduce tile size for " +
           "clients that handle label collisions across tiles (most web and native clients). NOTE: Do not reduce if you need to support " +
           "raster tile rendering",
-        Double.POSITIVE_INFINITY)
+        Double.POSITIVE_INFINITY),
+      arguments.getBoolean("log_jts_exceptions", "Emit verbose details to debug JTS geometry errors", false)
     );
   }
 

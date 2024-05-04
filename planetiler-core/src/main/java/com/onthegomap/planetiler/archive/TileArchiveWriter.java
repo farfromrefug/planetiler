@@ -15,6 +15,7 @@ import com.onthegomap.planetiler.stats.Timer;
 import com.onthegomap.planetiler.util.DiskBacked;
 import com.onthegomap.planetiler.util.Format;
 import com.onthegomap.planetiler.util.Hashing;
+import com.onthegomap.planetiler.util.LayerAttrStats;
 import com.onthegomap.planetiler.util.TileSizeStats;
 import com.onthegomap.planetiler.util.TileWeights;
 import com.onthegomap.planetiler.util.TilesetSummaryStatistics;
@@ -32,6 +33,7 @@ import java.util.Map;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.LongSupplier;
@@ -59,6 +61,7 @@ public class TileArchiveWriter {
   private final AtomicReference<TileCoord> lastTileWritten = new AtomicReference<>();
   private final TileArchiveMetadata tileArchiveMetadata;
   private final TilesetSummaryStatistics tileStats;
+  private final LayerAttrStats layerAttrStats = new LayerAttrStats();
 
   private TileArchiveWriter(Iterable<FeatureGroup.TileFeatures> inputTiles, WriteableTileArchive archive,
     PlanetilerConfig config, TileArchiveMetadata tileArchiveMetadata, Stats stats) {
@@ -85,9 +88,10 @@ public class TileArchiveWriter {
     TileArchiveMetadata tileArchiveMetadata, Path layerStatsPath, PlanetilerConfig config, Stats stats) {
     var timer = stats.startStage("archive");
 
-    int readThreads = config.featureReadThreads();
+    int chunksToRead = Math.max(1, features.chunksToRead());
+    int readThreads = Math.min(config.featureReadThreads(), chunksToRead);
     int threads = config.threads();
-    int processThreads = threads < 10 ? threads : threads - readThreads;
+    int processThreads = threads < 8 ? threads : (threads - readThreads);
     int tileWriteThreads = config.tileWriteThreads();
 
     // when using more than 1 read thread: (N read threads) -> (1 merge thread) -> ...
@@ -105,9 +109,7 @@ public class TileArchiveWriter {
       readWorker = reader.readWorker();
     }
 
-    TileArchiveWriter writer =
-      new TileArchiveWriter(inputTiles, output, config, tileArchiveMetadata.withLayerStats(features.layerStats()
-        .getTileStats()), stats);
+    TileArchiveWriter writer = new TileArchiveWriter(inputTiles, output, config, tileArchiveMetadata, stats);
 
     var pipeline = WorkerPipeline.start("archive", stats);
 
@@ -149,6 +151,9 @@ public class TileArchiveWriter {
       .addBuffer("reader_queue", queueSize)
       .sinkTo("encode", processThreads, writer::tileEncoderSink);
 
+    // ensure to initialize the archive BEFORE starting to write any tiles
+    output.initialize();
+
     // the tile writer will wait on the result of each batch to ensure tiles are written in order
     WorkerPipeline<TileBatch> writeBranch = pipeline.readFromQueue(writerQueue)
       .sinkTo("write", tileWriteThreads, writer::tileWriter);
@@ -179,10 +184,13 @@ public class TileArchiveWriter {
     loggers.newLine()
       .add(writer::getLastTileLogDetails);
 
-    var doneFuture = joinFutures(
-      writeBranch.done(),
-      layerStatsBranch == null ? CompletableFuture.completedFuture(null) : layerStatsBranch.done(),
-      encodeBranch.done());
+    final CompletableFuture<Void> tileWritersFuture = writeBranch.done();
+    final CompletableFuture<Void> layerStatsFuture =
+      layerStatsBranch == null ? CompletableFuture.completedFuture(null) : layerStatsBranch.done();
+    final CompletableFuture<Void> archiveFinisher =
+      CompletableFuture.allOf(tileWritersFuture, layerStatsFuture).thenRun(writer::finishArchive);
+
+    var doneFuture = joinFutures(tileWritersFuture, layerStatsFuture, encodeBranch.done(), archiveFinisher);
     loggers.awaitAndLog(doneFuture, config.logInterval());
     writer.printTileStats();
     timer.stop();
@@ -258,8 +266,10 @@ public class TileArchiveWriter {
     boolean lastIsFill = false;
     List<TileSizeStats.LayerStats> lastLayerStats = null;
     boolean skipFilled = config.skipFilledTiles();
+    var layerStatsSerializer = TileSizeStats.newThreadLocalSerializer();
 
     var tileStatsUpdater = tileStats.threadLocalUpdater();
+    var layerAttrStatsUpdater = layerAttrStats.handlerForThread();
     for (TileBatch batch : prev) {
       List<TileEncodingResult> result = new ArrayList<>(batch.size());
       FeatureGroup.TileFeatures last = null;
@@ -277,7 +287,7 @@ public class TileArchiveWriter {
           layerStats = lastLayerStats;
           memoizedTiles.inc();
         } else {
-          VectorTile tile = tileFeatures.getVectorTile();
+          VectorTile tile = tileFeatures.getVectorTile(layerAttrStatsUpdater);
           if (skipFilled && (lastIsFill = tile.containsOnlyFills())) {
             encoded = null;
             layerStats = null;
@@ -288,7 +298,7 @@ public class TileArchiveWriter {
             bytes = switch (config.tileCompression()) {
               case GZIP -> gzip(encoded);
               case NONE -> encoded;
-              case UNKNWON -> throw new IllegalArgumentException("cannot compress \"UNKNOWN\"");
+              case UNKNOWN -> throw new IllegalArgumentException("cannot compress \"UNKNOWN\"");
             };
             layerStats = TileSizeStats.computeTileStats(proto);
             if (encoded.length > config.tileWarningSizeBytes()) {
@@ -311,7 +321,7 @@ public class TileArchiveWriter {
         if ((!skipFilled || !lastIsFill) && bytes != null) {
           tileStatsUpdater.recordTile(tileFeatures.tileCoord(), bytes.length, layerStats);
           List<String> layerStatsRows = config.outputLayerStats() ?
-            TileSizeStats.formatOutputRows(tileFeatures.tileCoord(), bytes.length, layerStats) :
+            layerStatsSerializer.formatOutputRows(tileFeatures.tileCoord(), bytes.length, layerStats) :
             List.of();
           result.add(
             new TileEncodingResult(
@@ -329,11 +339,15 @@ public class TileArchiveWriter {
     }
   }
 
+  private final AtomicBoolean firstTileWriterTracker = new AtomicBoolean(true);
+
   private void tileWriter(Iterable<TileBatch> tileBatches) throws ExecutionException, InterruptedException {
+
+    final boolean firstTileWriter = firstTileWriterTracker.compareAndExchange(true, false);
+
     var f = NumberFormat.getNumberInstance(Locale.getDefault());
     f.setMaximumFractionDigits(5);
 
-    archive.initialize(tileArchiveMetadata);
     var order = archive.tileOrder();
 
     TileCoord lastTile = null;
@@ -349,10 +363,15 @@ public class TileArchiveWriter {
           lastTile = encodedTile.coord();
           int z = tileCoord.z();
           if (z != currentZ) {
-            if (time == null) {
-              LOGGER.info("Starting z{}", z);
-            } else {
-              LOGGER.info("Finished z{} in {}, now starting z{}", currentZ, time.stop(), z);
+            // for multiple writers the starting/finish log message of the _first_ tilewriter
+            // is not 100% accurate in terms of overall "zoom-progress",
+            // but it should be a "good-enough" indicator for "zoom-progress"-logging
+            if (firstTileWriter) {
+              if (time == null) {
+                LOGGER.info("Starting z{}", z);
+              } else {
+                LOGGER.info("Finished z{} in {}, now starting z{}", currentZ, time.stop(), z);
+              }
             }
             time = Timer.start();
             currentZ = z;
@@ -370,8 +389,6 @@ public class TileArchiveWriter {
     if (time != null) {
       LOGGER.info("Finished z{} in {}", currentZ, time.stop());
     }
-
-    archive.finish(tileArchiveMetadata);
   }
 
   @SuppressWarnings("java:S2629")
@@ -383,6 +400,10 @@ public class TileArchiveWriter {
 
   private long tilesEmitted() {
     return Stream.of(tilesByZoom).mapToLong(c -> c.get()).sum();
+  }
+
+  private void finishArchive() {
+    archive.finish(tileArchiveMetadata.withLayerStats(layerAttrStats.getTileStats()));
   }
 
   /**

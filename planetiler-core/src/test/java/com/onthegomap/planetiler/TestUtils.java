@@ -15,8 +15,10 @@ import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlElementWrapper;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlProperty;
 import com.fasterxml.jackson.dataformat.xml.annotation.JacksonXmlRootElement;
 import com.fasterxml.jackson.datatype.jdk8.Jdk8Module;
+import com.google.common.collect.ImmutableMap;
 import com.onthegomap.planetiler.archive.ReadableTileArchive;
 import com.onthegomap.planetiler.archive.Tile;
+import com.onthegomap.planetiler.archive.TileArchiveMetadata;
 import com.onthegomap.planetiler.archive.TileCompression;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
@@ -26,6 +28,7 @@ import com.onthegomap.planetiler.mbtiles.Mbtiles;
 import com.onthegomap.planetiler.mbtiles.Verify;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
+import com.onthegomap.planetiler.util.LayerAttrStats;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -42,6 +45,8 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.OptionalInt;
 import java.util.Set;
 import java.util.TreeMap;
 import java.util.TreeSet;
@@ -72,6 +77,62 @@ public class TestUtils {
 
   public static final AffineTransformation TRANSFORM_TO_TILE = AffineTransformation
     .scaleInstance(256d / 4096d, 256d / 4096d);
+
+  public static final TileArchiveMetadata MAX_METADATA_DESERIALIZED =
+    new TileArchiveMetadata("name", "description", "attribution", "version", "type", "format", new Envelope(0, 1, 2, 3),
+      new Coordinate(1.3, 3.7, 1.0), 2, 3,
+      TileArchiveMetadata.TileArchiveMetadataJson.create(
+        List.of(
+          new LayerAttrStats.VectorLayer("vl0",
+            ImmutableMap.of("1", LayerAttrStats.FieldType.BOOLEAN, "2", LayerAttrStats.FieldType.NUMBER, "3",
+              LayerAttrStats.FieldType.STRING),
+            Optional.of("description"), OptionalInt.of(1), OptionalInt.of(2)),
+          new LayerAttrStats.VectorLayer("vl1",
+            Map.of(),
+            Optional.empty(), OptionalInt.empty(), OptionalInt.empty())
+        )
+      ),
+      ImmutableMap.of("a", "b", "c", "d"),
+      TileCompression.GZIP);
+  public static final String MAX_METADATA_SERIALIZED = """
+    {
+      "name":"name",
+      "description":"description",
+      "attribution":"attribution",
+      "version":"version",
+      "type":"type",
+      "format":"format",
+      "minzoom":"2",
+      "maxzoom":"3",
+      "compression":"gzip",
+      "bounds":"0,2,1,3",
+      "center":"1.3,3.7,1",
+      "json": "{
+        \\"vector_layers\\":[
+          {
+            \\"id\\":\\"vl0\\",
+            \\"fields\\":{
+              \\"1\\":\\"Boolean\\",
+              \\"2\\":\\"Number\\",
+              \\"3\\":\\"String\\"
+            },
+            \\"description\\":\\"description\\",
+            \\"minzoom\\":1,
+            \\"maxzoom\\":2
+          },
+          {
+            \\"id\\":\\"vl1\\",
+            \\"fields\\":{}
+          }
+        ]
+      }",
+      "a":"b",
+      "c":"d"
+    }""".lines().map(String::trim).collect(Collectors.joining(""));
+
+  public static final TileArchiveMetadata MIN_METADATA_DESERIALIZED =
+    new TileArchiveMetadata(null, null, null, null, null, null, null, null, null, null, null, null, null);
+  public static final String MIN_METADATA_SERIALIZED = "{}";
 
   public static List<Coordinate> newCoordinateList(double... coords) {
     List<Coordinate> result = new ArrayList<>(coords.length / 2);
@@ -215,10 +276,10 @@ public class TestUtils {
       var bytes = switch (tileCompression) {
         case GZIP -> gunzip(tile.bytes());
         case NONE -> tile.bytes();
-        case UNKNWON -> throw new IllegalArgumentException("cannot decompress \"UNKNOWN\"");
+        case UNKNOWN -> throw new IllegalArgumentException("cannot decompress \"UNKNOWN\"");
       };
       var decoded = VectorTile.decode(bytes).stream()
-        .map(feature -> feature(decodeSilently(feature.geometry()), feature.attrs())).toList();
+        .map(feature -> feature(decodeSilently(feature.geometry()), feature.layer(), feature.attrs())).toList();
       tiles.put(tile.coord(), decoded);
     }
     return tiles;
@@ -405,11 +466,32 @@ public class TestUtils {
 
   public record ComparableFeature(
     GeometryComparision geometry,
+    String layer,
     Map<String, Object> attrs
-  ) {}
+  ) {
+
+    @Override
+    public boolean equals(Object o) {
+      return o == this || (o instanceof ComparableFeature other &&
+        geometry.equals(other.geometry) &&
+        attrs.equals(other.attrs) &&
+        (layer == null || other.layer == null || Objects.equals(layer, other.layer)));
+    }
+
+    @Override
+    public int hashCode() {
+      int result = geometry.hashCode();
+      result = 31 * result + attrs.hashCode();
+      return result;
+    }
+  }
+
+  public static ComparableFeature feature(Geometry geom, String layer, Map<String, Object> attrs) {
+    return new ComparableFeature(new NormGeometry(geom), layer, attrs);
+  }
 
   public static ComparableFeature feature(Geometry geom, Map<String, Object> attrs) {
-    return new ComparableFeature(new NormGeometry(geom), attrs);
+    return new ComparableFeature(new NormGeometry(geom), null, attrs);
   }
 
   public static Map<String, Object> toMap(FeatureCollector.Feature feature, int zoom) {

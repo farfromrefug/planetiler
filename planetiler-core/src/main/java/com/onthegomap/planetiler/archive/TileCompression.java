@@ -1,21 +1,26 @@
 package com.onthegomap.planetiler.archive;
 
-import com.fasterxml.jackson.annotation.JsonEnumDefaultValue;
 import com.fasterxml.jackson.annotation.JsonProperty;
+import com.fasterxml.jackson.core.JsonParser;
+import com.fasterxml.jackson.databind.DeserializationContext;
+import com.fasterxml.jackson.databind.JsonDeserializer;
+import com.fasterxml.jackson.databind.annotation.JsonDeserialize;
+import java.io.IOException;
 import java.util.Arrays;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
+@JsonDeserialize(using = TileCompression.Deserializer.class)
 public enum TileCompression {
 
   @JsonProperty("none")
   NONE("none"),
   @JsonProperty("gzip")
   GZIP("gzip"),
-  @JsonProperty("unknown") @JsonEnumDefaultValue
-  UNKNWON("unknown");
+  @JsonProperty("unknown")
+  UNKNOWN("unknown");
 
   private final String id;
 
@@ -37,10 +42,22 @@ public enum TileCompression {
   }
 
   public static Set<TileCompression> availableValues() {
-    return Arrays.stream(TileCompression.values()).filter(tc -> tc != UNKNWON).collect(Collectors.toUnmodifiableSet());
+    return Arrays.stream(TileCompression.values()).filter(tc -> tc != UNKNOWN).collect(Collectors.toUnmodifiableSet());
   }
 
   public String id() {
     return id;
+  }
+
+  static class Deserializer extends JsonDeserializer<TileCompression> {
+    @Override
+    public TileCompression deserialize(JsonParser p, DeserializationContext ctxt) throws IOException {
+      return findById(p.getValueAsString()).orElse(TileCompression.UNKNOWN);
+    }
+
+    @Override
+    public TileCompression getNullValue(DeserializationContext ctxt) {
+      return TileCompression.GZIP;
+    }
   }
 }

@@ -27,6 +27,7 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryType;
 import com.onthegomap.planetiler.geo.MutableCoordinateSequence;
 import com.onthegomap.planetiler.util.Hilbert;
+import com.onthegomap.planetiler.util.LayerAttrStats;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.HashMap;
@@ -34,6 +35,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.TreeMap;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -41,6 +43,7 @@ import javax.annotation.concurrent.NotThreadSafe;
 import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateSequence;
+import org.locationtech.jts.geom.CoordinateXY;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.LineString;
@@ -73,13 +76,16 @@ import vector_tile.VectorTileProto;
  */
 @NotThreadSafe
 public class VectorTile {
+  public static final long NO_FEATURE_ID = 0;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(VectorTile.class);
 
   // TODO make these configurable
   private static final int EXTENT = 4096;
   private static final double SIZE = 256d;
-  private final Map<String, Layer> layers = new LinkedHashMap<>();
+  // use a treemap to ensure that layers are encoded in a consistent order
+  private final Map<String, Layer> layers = new TreeMap<>();
+  private LayerAttrStats.Updater.ForZoom layerStatsTracker = LayerAttrStats.Updater.ForZoom.NOOP;
 
   private static int[] getCommands(Geometry input, int scale) {
     var encoder = new CommandEncoder(scale);
@@ -263,7 +269,7 @@ public class VectorTile {
             lineStrings.add(gf.createLineString(coordSeq));
           }
           if (lineStrings.size() == 1) {
-            geometry = lineStrings.get(0);
+            geometry = lineStrings.getFirst();
           } else if (lineStrings.size() > 1) {
             geometry = gf.createMultiLineString(lineStrings.toArray(new LineString[0]));
           }
@@ -305,12 +311,12 @@ public class VectorTile {
           }
           List<Polygon> polygons = new ArrayList<>();
           for (List<LinearRing> rings : polygonRings) {
-            LinearRing shell = rings.get(0);
+            LinearRing shell = rings.getFirst();
             LinearRing[] holes = rings.subList(1, rings.size()).toArray(new LinearRing[rings.size() - 1]);
             polygons.add(gf.createPolygon(shell, holes));
           }
           if (polygons.size() == 1) {
-            geometry = polygons.get(0);
+            geometry = polygons.getFirst();
           }
           if (polygons.size() > 1) {
             geometry = gf.createMultiPolygon(GeometryFactory.toPolygonArray(polygons));
@@ -376,7 +382,7 @@ public class VectorTile {
 
         for (VectorTileProto.Tile.Feature feature : layer.getFeaturesList()) {
           int tagsCount = feature.getTagsCount();
-          Map<String, Object> attrs = new HashMap<>(tagsCount / 2);
+          Map<String, Object> attrs = HashMap.newHashMap(tagsCount / 2);
           int tagIdx = 0;
           while (tagIdx < feature.getTagsCount()) {
             String key = keys.get(feature.getTags(tagIdx++));
@@ -467,12 +473,12 @@ public class VectorTile {
     if (features.isEmpty()) {
       return this;
     }
-
     Layer layer = layers.get(layerName);
     if (layer == null) {
       layer = new Layer();
       layers.put(layerName, layer);
     }
+    var statsTracker = layerStatsTracker.forLayer(layerName);
 
     for (Feature inFeature : features) {
       if (inFeature != null && inFeature.geometry().commands().length > 0) {
@@ -481,8 +487,11 @@ public class VectorTile {
         for (Map.Entry<String, ?> e : inFeature.attrs().entrySet()) {
           // skip attribute without value
           if (e.getValue() != null) {
-            outFeature.tags.add(layer.key(e.getKey()));
-            outFeature.tags.add(layer.value(e.getValue()));
+            String key = e.getKey();
+            Object value = e.getValue();
+            outFeature.tags.add(layer.key(key));
+            outFeature.tags.add(layer.value(value));
+            statsTracker.accept(key, value);
           }
         }
 
@@ -509,20 +518,14 @@ public class VectorTile {
 
       for (Object value : layer.values()) {
         VectorTileProto.Tile.Value.Builder tileValue = VectorTileProto.Tile.Value.newBuilder();
-        if (value instanceof String stringValue) {
-          tileValue.setStringValue(stringValue);
-        } else if (value instanceof Integer intValue) {
-          tileValue.setSintValue(intValue);
-        } else if (value instanceof Long longValue) {
-          tileValue.setSintValue(longValue);
-        } else if (value instanceof Float floatValue) {
-          tileValue.setFloatValue(floatValue);
-        } else if (value instanceof Double doubleValue) {
-          tileValue.setDoubleValue(doubleValue);
-        } else if (value instanceof Boolean booleanValue) {
-          tileValue.setBoolValue(booleanValue);
-        } else {
-          tileValue.setStringValue(value.toString());
+        switch (value) {
+          case String stringValue -> tileValue.setStringValue(stringValue);
+          case Integer intValue -> tileValue.setSintValue(intValue);
+          case Long longValue -> tileValue.setSintValue(longValue);
+          case Float floatValue -> tileValue.setFloatValue(floatValue);
+          case Double doubleValue -> tileValue.setDoubleValue(doubleValue);
+          case Boolean booleanValue -> tileValue.setBoolValue(booleanValue);
+          case Object other -> tileValue.setStringValue(other.toString());
         }
         tileLayer.addValues(tileValue.build());
       }
@@ -533,7 +536,7 @@ public class VectorTile {
           .setType(feature.geometry().geomType().asProtobufType())
           .addAllGeometry(Ints.asList(feature.geometry().commands()));
 
-        // if (feature.id >= 0) {
+        // if (feature.id != NO_FEATURE_ID) {
         //   featureBuilder.setId(feature.id);
         // }
 
@@ -598,6 +601,15 @@ public class VectorTile {
    */
   public boolean likelyToBeDuplicated() {
     return layers.values().stream().allMatch(v -> v.encodedFeatures.isEmpty()) || containsOnlyFillsOrEdges();
+  }
+
+  /**
+   * Call back to {@code layerStats} as vector tile features are being encoded in
+   * {@link #addLayerFeatures(String, List)} to track attribute types present on features in each layer, for example to
+   * emit in tilejson metadata stats.
+   */
+  public void trackLayerStats(LayerAttrStats.Updater.ForZoom layerStats) {
+    this.layerStatsTracker = layerStats;
   }
 
   enum Command {
@@ -976,6 +988,20 @@ public class VectorTile {
       return Hilbert.hilbertXYToIndex(15, x >> scale, y >> scale);
     }
 
+
+    /**
+     * Returns the coordinate of the first point in this geometry in tile pixel coordinates from (0,0) at the top left
+     * to (256,256) at the bottom right.
+     */
+    public CoordinateXY firstCoordinate() {
+      if (commands.length < 3) {
+        return null;
+      }
+      double factor = 1 << scale;
+      double x = zigZagDecode(commands[1]) * SIZE / EXTENT / factor;
+      double y = zigZagDecode(commands[2]) * SIZE / EXTENT / factor;
+      return new CoordinateXY(x, y);
+    }
   }
 
   /**
@@ -1072,31 +1098,32 @@ public class VectorTile {
     }
 
     void accept(Geometry geometry) {
-      if (geometry instanceof MultiLineString multiLineString) {
-        for (int i = 0; i < multiLineString.getNumGeometries(); i++) {
-          encode(((LineString) multiLineString.getGeometryN(i)).getCoordinateSequence(), false, GeometryType.LINE);
+      switch (geometry) {
+        case MultiLineString multiLineString -> {
+          for (int i = 0; i < multiLineString.getNumGeometries(); i++) {
+            encode(((LineString) multiLineString.getGeometryN(i)).getCoordinateSequence(), false, GeometryType.LINE);
+          }
         }
-      } else if (geometry instanceof Polygon polygon) {
-        LineString exteriorRing = polygon.getExteriorRing();
-        encode(exteriorRing.getCoordinateSequence(), true, GeometryType.POLYGON);
-
-        for (int i = 0; i < polygon.getNumInteriorRing(); i++) {
-          LineString interiorRing = polygon.getInteriorRingN(i);
-          encode(interiorRing.getCoordinateSequence(), true, GeometryType.LINE);
+        case Polygon polygon -> {
+          LineString exteriorRing = polygon.getExteriorRing();
+          encode(exteriorRing.getCoordinateSequence(), true, GeometryType.POLYGON);
+          for (int i = 0; i < polygon.getNumInteriorRing(); i++) {
+            LineString interiorRing = polygon.getInteriorRingN(i);
+            encode(interiorRing.getCoordinateSequence(), true, GeometryType.LINE);
+          }
         }
-      } else if (geometry instanceof MultiPolygon multiPolygon) {
-        for (int i = 0; i < multiPolygon.getNumGeometries(); i++) {
-          accept(multiPolygon.getGeometryN(i));
+        case MultiPolygon multiPolygon -> {
+          for (int i = 0; i < multiPolygon.getNumGeometries(); i++) {
+            accept(multiPolygon.getGeometryN(i));
+          }
         }
-      } else if (geometry instanceof LineString lineString) {
-        encode(lineString.getCoordinateSequence(), shouldClosePath(geometry), GeometryType.LINE);
-      } else if (geometry instanceof Point point) {
-        encode(point.getCoordinateSequence(), false, GeometryType.POINT);
-      } else if (geometry instanceof Puntal) {
-        encode(new CoordinateArraySequence(geometry.getCoordinates()), shouldClosePath(geometry),
+        case LineString lineString ->
+          encode(lineString.getCoordinateSequence(), shouldClosePath(geometry), GeometryType.LINE);
+        case Point point -> encode(point.getCoordinateSequence(), false, GeometryType.POINT);
+        case Puntal ignored -> encode(new CoordinateArraySequence(geometry.getCoordinates()), shouldClosePath(geometry),
           geometry instanceof MultiPoint, GeometryType.POINT);
-      } else {
-        LOGGER.warn("Unrecognized geometry type: " + geometry.getGeometryType());
+        case null -> LOGGER.warn("Null geometry type");
+        default -> LOGGER.warn("Unrecognized geometry type: " + geometry.getGeometryType());
       }
     }
 

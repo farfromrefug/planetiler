@@ -185,7 +185,7 @@ class ExternalMergeSort implements FeatureSort {
       .sinkToConsumer("worker", workers, group -> {
         try {
           readSemaphore.acquire();
-          var chunk = group.get(0);
+          var chunk = group.getFirst();
           var others = group.stream().skip(1).toList();
           var toSort = time(reading, () -> {
             // merge all chunks into first one, and remove the others
@@ -253,7 +253,12 @@ class ExternalMergeSort implements FeatureSort {
       }
     }
 
-    return LongMerger.mergeIterators(iterators);
+    return LongMerger.mergeIterators(iterators, SortableFeature.COMPARE_BYTES);
+  }
+
+  @Override
+  public int chunksToRead() {
+    return chunks.size();
   }
 
   public int chunks() {

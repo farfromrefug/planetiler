@@ -74,6 +74,11 @@ interface FeatureSort extends Iterable<SortableFeature>, DiskBacked, MemoryEstim
           .mapToObj(list::get)
           .iterator();
       }
+
+      @Override
+      public int chunksToRead() {
+        return list.size();
+      }
     };
   }
 
@@ -131,8 +136,10 @@ interface FeatureSort extends Iterable<SortableFeature>, DiskBacked, MemoryEstim
         }
       }
     });
-    return new ParallelIterator(reader, LongMerger.mergeSuppliers(queues));
+    return new ParallelIterator(reader, LongMerger.mergeSuppliers(queues, SortableFeature.COMPARE_BYTES));
   }
+
+  int chunksToRead();
 
   record ParallelIterator(Worker reader, @Override Iterator<SortableFeature> iterator)
     implements Iterable<SortableFeature> {}

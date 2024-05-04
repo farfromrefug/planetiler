@@ -79,6 +79,8 @@
               </org.opencontainers.image.source>
             </labels>
             <mainClass>${mainClass}</mainClass>
+            <creationTime>${maven.build.timestamp}</creationTime>
+            <filesModificationTime>${maven.build.timestamp}</filesModificationTime>
           </container>
         </configuration>
       </plugin>
@@ -87,7 +89,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-assembly-plugin</artifactId>
-        <version>3.6.0</version>
+        <version>3.7.1</version>
         <dependencies>
           <dependency>
             <groupId>com.onthegomap.planetiler</groupId>

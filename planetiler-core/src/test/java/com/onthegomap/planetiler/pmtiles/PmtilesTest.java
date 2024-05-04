@@ -28,7 +28,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
-import org.locationtech.jts.geom.CoordinateXY;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
 
 class PmtilesTest {
@@ -54,13 +54,13 @@ class PmtilesTest {
     Pmtiles.TileType tileType = Pmtiles.TileType.MVT;
     byte minZoom = 1;
     byte maxZoom = 3;
-    int minLonE7 = -10_000_000;
-    int minLatE7 = -20_000_000;
-    int maxLonE7 = 10_000_000;
-    int maxLatE7 = 20_000_000;
+    int minLonE7 = -10_100_000;
+    int minLatE7 = -20_200_000;
+    int maxLonE7 = 10_100_000;
+    int maxLatE7 = 20_200_000;
     byte centerZoom = 2;
-    int centerLonE7 = -5_000_000;
-    int centerLatE7 = -6_000_000;
+    int centerLonE7 = -5_500_000;
+    int centerLatE7 = -6_600_000;
 
     Pmtiles.Header in = new Pmtiles.Header(
       specVersion,
@@ -188,7 +188,7 @@ class PmtilesTest {
 
     var config = PlanetilerConfig.defaults();
     var metadata = new TileArchiveMetadata(new Profile.NullProfile(), config);
-    in.initialize(metadata);
+    in.initialize();
     var writer = in.newTileWriter();
     writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 1), new byte[]{0xa, 0x2}, OptionalLong.empty()));
 
@@ -220,12 +220,13 @@ class PmtilesTest {
       "MyVersion",
       "baselayer",
       TileArchiveMetadata.MVT_FORMAT,
-      new Envelope(1, 2, 3, 4),
-      new CoordinateXY(5, 6),
-      7d,
+      new Envelope(1.1, 2.2, 3.3, 4.4),
+      new Coordinate(5.5, 6.6, 7d),
       8,
       9,
-      List.of(new LayerAttrStats.VectorLayer("MyLayer", Map.of())),
+      TileArchiveMetadata.TileArchiveMetadataJson.create(
+        List.of(new LayerAttrStats.VectorLayer("MyLayer", Map.of()))
+      ),
       Map.of("other key", "other value"),
       TileCompression.GZIP
     ));
@@ -235,12 +236,11 @@ class PmtilesTest {
   @EnumSource(value = TileCompression.class, names = {"GZIP", "NONE"})
   void testRoundtripMetadataMinimal(TileCompression tileCompression) throws IOException {
     roundTripMetadata(
-      new TileArchiveMetadata(null, null, null, null, null, null, null, null, null, null, null, null, Map.of(),
+      new TileArchiveMetadata(null, null, null, null, null, null, null, null, null, null, null, Map.of(),
         tileCompression),
       new TileArchiveMetadata(null, null, null, null, null, null,
         new Envelope(-180, 180, -85.0511287, 85.0511287),
-        new CoordinateXY(0, 0),
-        0d,
+        new Coordinate(0, 0, 0d),
         0,
         15,
         null,
@@ -259,7 +259,7 @@ class PmtilesTest {
       var channel = new SeekableInMemoryByteChannel(0);
       var in = WriteablePmtiles.newWriteToMemory(channel)
     ) {
-      in.initialize(input);
+      in.initialize();
       var writer = in.newTileWriter();
       writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 0), new byte[]{0xa, 0x2}, OptionalLong.empty()));
 
@@ -299,7 +299,7 @@ class PmtilesTest {
 
     var config = PlanetilerConfig.defaults();
     var metadata = new TileArchiveMetadata(new Profile.NullProfile(), config);
-    in.initialize(metadata);
+    in.initialize();
     var writer = in.newTileWriter();
     writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 0), new byte[]{0xa, 0x2}, OptionalLong.of(42)));
     writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 1), new byte[]{0xa, 0x2}, OptionalLong.of(42)));
@@ -337,7 +337,7 @@ class PmtilesTest {
 
     var config = PlanetilerConfig.defaults();
     var metadata = new TileArchiveMetadata(new Profile.NullProfile(), config);
-    in.initialize(metadata);
+    in.initialize();
     var writer = in.newTileWriter();
     writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 1), new byte[]{0xa, 0x2}, OptionalLong.of(42)));
     writer.write(new TileEncodingResult(TileCoord.ofXYZ(0, 0, 0), new byte[]{0xa, 0x2}, OptionalLong.of(42)));
@@ -372,7 +372,7 @@ class PmtilesTest {
 
     var config = PlanetilerConfig.defaults();
     var metadata = new TileArchiveMetadata(new Profile.NullProfile(), config);
-    in.initialize(metadata);
+    in.initialize();
     var writer = in.newTileWriter();
 
     int ENTRIES = 20000;

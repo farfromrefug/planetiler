@@ -2,16 +2,12 @@ package com.onthegomap.planetiler.util;
 
 import com.fasterxml.jackson.annotation.JsonProperty;
 import com.onthegomap.planetiler.archive.WriteableTileArchive;
-import com.onthegomap.planetiler.mbtiles.Mbtiles;
-import com.onthegomap.planetiler.render.RenderedFeature;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalInt;
 import java.util.TreeMap;
 import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.function.Consumer;
 import javax.annotation.concurrent.NotThreadSafe;
 import javax.annotation.concurrent.ThreadSafe;
 
@@ -23,11 +19,11 @@ import javax.annotation.concurrent.ThreadSafe;
  * thread-local handler that can update stats without contention.
  * </p>
  *
- * @see Mbtiles.MetadataJson
+ * @see com.onthegomap.planetiler.archive.TileArchiveMetadata.TileArchiveMetadataJson
  * @see <a href="https://github.com/mapbox/mbtiles-spec/blob/master/1.3/spec.md#content">MBtiles spec</a>
  */
 @ThreadSafe
-public class LayerAttrStats implements Consumer<RenderedFeature> {
+public class LayerAttrStats {
   /*
    * This utility is called for billions of features by multiple threads when processing the planet which can make
    * access to shared data structures a bottleneck.  So give each thread an individual ThreadLocalLayerStatsHandler to
@@ -63,6 +59,11 @@ public class LayerAttrStats implements Consumer<RenderedFeature> {
       .toList();
   }
 
+  /** Shortcut for tests */
+  void accept(String layer, int zoom, String key, Object value) {
+    handlerForThread().forZoom(zoom).forLayer(layer).accept(key, value);
+  }
+
   public enum FieldType {
     @JsonProperty("Number")
     NUMBER,
@@ -95,10 +96,6 @@ public class LayerAttrStats implements Consumer<RenderedFeature> {
       this(id, fields, Optional.empty(), OptionalInt.of(minzoom), OptionalInt.of(maxzoom));
     }
 
-    public static VectorLayer forLayer(String id) {
-      return new VectorLayer(id, new HashMap<>());
-    }
-
     public VectorLayer withDescription(String newDescription) {
       return new VectorLayer(id, fields, Optional.of(newDescription), minzoom, maxzoom);
     }
@@ -114,7 +111,7 @@ public class LayerAttrStats implements Consumer<RenderedFeature> {
 
   /** Accepts features from a single thread that will be combined across all threads in {@link #getTileStats()}. */
   @NotThreadSafe
-  private class ThreadLocalHandler implements Consumer<RenderedFeature> {
+  private class ThreadLocalHandler implements Updater {
 
     private final Map<String, StatsForLayer> layers = new TreeMap<>();
 
@@ -123,48 +120,57 @@ public class LayerAttrStats implements Consumer<RenderedFeature> {
     }
 
     @Override
-    public void accept(RenderedFeature feature) {
-      var vectorTileFeature = feature.vectorTileFeature();
-      var stats = layers.computeIfAbsent(vectorTileFeature.layer(), StatsForLayer::new);
-      stats.expandZoomRangeToInclude(feature.tile().z());
-      for (var entry : vectorTileFeature.attrs().entrySet()) {
-        String key = entry.getKey();
-        Object value = entry.getValue();
-
-        FieldType fieldType = null;
-        if (value instanceof Number) {
-          fieldType = FieldType.NUMBER;
-        } else if (value instanceof Boolean) {
-          fieldType = FieldType.BOOLEAN;
-        } else if (value != null) {
-          fieldType = FieldType.STRING;
-        }
-        if (fieldType != null) {
-          // widen different types to string
-          stats.fields.merge(key, fieldType, FieldType::merge);
-        }
-      }
+    public Updater.ForZoom forZoom(int zoom) {
+      return layer -> {
+        var stats = layers.computeIfAbsent(layer, StatsForLayer::new);
+        stats.expandZoomRangeToInclude(zoom);
+        return (key, value) -> {
+          FieldType fieldType = null;
+          if (value instanceof Number) {
+            fieldType = FieldType.NUMBER;
+          } else if (value instanceof Boolean) {
+            fieldType = FieldType.BOOLEAN;
+          } else if (value != null) {
+            fieldType = FieldType.STRING;
+          }
+          if (fieldType != null) {
+            // widen different types to string
+            stats.fields.merge(key, fieldType, FieldType::merge);
+          }
+        };
+      };
     }
   }
 
   /**
    * Returns a handler optimized for accepting features from a single thread.
-   * <p>
-   * Use this instead of {@link #accept(RenderedFeature)}
    */
-  public Consumer<RenderedFeature> handlerForThread() {
+  public Updater handlerForThread() {
     return layerStats.get();
   }
 
-  @Override
-  public void accept(RenderedFeature feature) {
-    handlerForThread().accept(feature);
+  public interface Updater {
+
+    ForZoom forZoom(int zoom);
+
+    interface ForZoom {
+
+      ForZoom NOOP = layer -> (key, value) -> {
+      };
+
+      ForLayer forLayer(String layer);
+
+      interface ForLayer {
+        void accept(String key, Object value);
+      }
+    }
   }
 
   private static class StatsForLayer {
 
     private final String layer;
-    private final Map<String, FieldType> fields = new HashMap<>();
+    // use TreeMap to ensure the same output always appears the same in an archive
+    private final Map<String, FieldType> fields = new TreeMap<>();
     private int minzoom = Integer.MAX_VALUE;
     private int maxzoom = Integer.MIN_VALUE;
 

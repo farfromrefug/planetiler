@@ -11,7 +11,7 @@ import java.io.OutputStream;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.util.function.Consumer;
-import org.locationtech.jts.geom.CoordinateXY;
+import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Envelope;
 
 /**
@@ -50,14 +50,8 @@ public final class WriteableProtoStreamArchive extends WriteableStreamArchive {
   }
 
   @Override
-  public void initialize(TileArchiveMetadata metadata) {
-    writeEntry(
-      StreamArchiveProto.Entry.newBuilder()
-        .setInitialization(
-          StreamArchiveProto.InitializationEntry.newBuilder().setMetadata(toExportData(metadata)).build()
-        )
-        .build()
-    );
+  public void initialize() {
+    writeEntry(StreamArchiveProto.Entry.newBuilder().build());
   }
 
   @Override
@@ -89,13 +83,12 @@ public final class WriteableProtoStreamArchive extends WriteableStreamArchive {
     setIfNotNull(metaDataBuilder::setFormat, metadata.format());
     setIfNotNull(metaDataBuilder::setBounds, toExportData(metadata.bounds()));
     setIfNotNull(metaDataBuilder::setCenter, toExportData(metadata.center()));
-    setIfNotNull(metaDataBuilder::setZoom, metadata.zoom());
     setIfNotNull(metaDataBuilder::setMinZoom, metadata.minzoom());
     setIfNotNull(metaDataBuilder::setMaxZoom, metadata.maxzoom());
     final StreamArchiveProto.TileCompression tileCompression = switch (metadata.tileCompression()) {
       case GZIP -> StreamArchiveProto.TileCompression.TILE_COMPRESSION_GZIP;
       case NONE -> StreamArchiveProto.TileCompression.TILE_COMPRESSION_NONE;
-      case UNKNWON -> throw new IllegalArgumentException("should not produce \"UNKNOWN\" compression");
+      case UNKNOWN -> throw new IllegalArgumentException("should not produce \"UNKNOWN\" compression");
     };
     metaDataBuilder.setTileCompression(tileCompression);
     if (metadata.vectorLayers() != null) {
@@ -120,13 +113,14 @@ public final class WriteableProtoStreamArchive extends WriteableStreamArchive {
       .build();
   }
 
-  private static StreamArchiveProto.CoordinateXY toExportData(CoordinateXY coord) {
+  private static StreamArchiveProto.Coordinate toExportData(Coordinate coord) {
     if (coord == null) {
       return null;
     }
-    return StreamArchiveProto.CoordinateXY.newBuilder()
+    return StreamArchiveProto.Coordinate.newBuilder()
       .setX(coord.getX())
       .setY(coord.getY())
+      .setZ(coord.getZ())
       .build();
   }
 
