@@ -198,11 +198,11 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
       Geometry geom;
       if(tolerance != 0) {
         boolean simplifyUsingVW = feature.getSimplifyUsingVW();
-        if (simplifyUsingVW) {
-          geom = VWSimplifier.simplify(scaled, tolerance);
-        } else {
+        // if (simplifyUsingVW) {
+        //   geom = VWSimplifier.simplify(scaled, tolerance);
+        // } else {
           geom = DouglasPeuckerSimplifier.simplify(scaled, tolerance);
-        }
+        // }
       } else {
         geom = scaled;
       }
