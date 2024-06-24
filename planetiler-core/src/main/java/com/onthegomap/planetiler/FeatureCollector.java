@@ -428,7 +428,7 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public double getMinPixelSizeAtZoom(int zoom) {
       return zoom == config.maxzoomForRendering() ? minPixelSizeAtMaxZoom :
-        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize);
+        ZoomFunction.applyAsDoubleOrElse(minPixelSize, zoom, defaultMinPixelSize * defaultMinPixelSizeFactor);
     }
 
     /**
