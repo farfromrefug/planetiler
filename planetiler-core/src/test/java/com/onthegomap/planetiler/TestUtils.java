@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.junit.jupiter.api.Assertions.fail;
+import static org.junit.jupiter.api.DynamicTest.dynamicTest;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,6 +30,8 @@ import com.onthegomap.planetiler.mbtiles.Verify;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.LayerAttrStats;
+import com.onthegomap.planetiler.validator.BaseSchemaValidator;
+import com.onthegomap.planetiler.validator.SchemaSpecification;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Files;
@@ -52,7 +55,9 @@ import java.util.TreeMap;
 import java.util.TreeSet;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.apache.commons.lang3.reflect.FieldUtils;
+import org.junit.jupiter.api.DynamicNode;
 import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateSequence;
@@ -279,7 +284,9 @@ public class TestUtils {
         case UNKNOWN -> throw new IllegalArgumentException("cannot decompress \"UNKNOWN\"");
       };
       var decoded = VectorTile.decode(bytes).stream()
-        .map(feature -> feature(decodeSilently(feature.geometry()), feature.layer(), feature.attrs())).toList();
+        .map(
+          feature -> feature(decodeSilently(feature.geometry()), feature.layer(), feature.tags(), feature.id()))
+        .toList();
       tiles.put(tile.coord(), decoded);
     }
     return tiles;
@@ -428,6 +435,24 @@ public class TestUtils {
     }
   }
 
+  public record RoundGeometry(Geometry geom) implements GeometryComparision {
+
+    @Override
+    public boolean equals(Object o) {
+      return o instanceof GeometryComparision that && round(geom).equalsNorm(round(that.geom()));
+    }
+
+    @Override
+    public String toString() {
+      return "Round{" + round(geom).norm() + '}';
+    }
+
+    @Override
+    public int hashCode() {
+      return 0;
+    }
+  }
+
   private record ExactGeometry(Geometry geom) implements GeometryComparision {
 
     @Override
@@ -467,12 +492,21 @@ public class TestUtils {
   public record ComparableFeature(
     GeometryComparision geometry,
     String layer,
-    Map<String, Object> attrs
+    Map<String, Object> attrs,
+    Long id
   ) {
+    ComparableFeature(
+      GeometryComparision geometry,
+      String layer,
+      Map<String, Object> attrs
+    ) {
+      this(geometry, layer, attrs, null);
+    }
 
     @Override
     public boolean equals(Object o) {
       return o == this || (o instanceof ComparableFeature other &&
+        (id == null || other.id == null || id.equals(other.id)) &&
         geometry.equals(other.geometry) &&
         attrs.equals(other.attrs) &&
         (layer == null || other.layer == null || Objects.equals(layer, other.layer)));
@@ -484,10 +518,23 @@ public class TestUtils {
       result = 31 * result + attrs.hashCode();
       return result;
     }
+
+    ComparableFeature withId(long id) {
+      return new ComparableFeature(geometry, layer, attrs, id);
+    }
+  }
+
+
+  public static ComparableFeature feature(Geometry geom, String layer, Map<String, Object> attrs, long id) {
+    return new ComparableFeature(new NormGeometry(geom), layer, attrs, id);
   }
 
   public static ComparableFeature feature(Geometry geom, String layer, Map<String, Object> attrs) {
     return new ComparableFeature(new NormGeometry(geom), layer, attrs);
+  }
+
+  public static ComparableFeature feature(Geometry geom, Map<String, Object> attrs, long id) {
+    return new ComparableFeature(new NormGeometry(geom), null, attrs, id);
   }
 
   public static ComparableFeature feature(Geometry geom, Map<String, Object> attrs) {
@@ -738,7 +785,7 @@ public class TestUtils {
           if (feature.geometry().decode().isWithinDistance(tilePoint, 2)) {
             containedInLayers.add(feature.layer());
             if (layer.equals(feature.layer())) {
-              Map<String, Object> tags = feature.attrs();
+              Map<String, Object> tags = feature.tags();
               containedInLayerFeatures.add(tags.toString());
               if (tags.entrySet().containsAll(attrs.entrySet())) {
                 // found a match
@@ -802,5 +849,19 @@ public class TestUtils {
     } catch (IllegalAccessException | SQLException e) {
       fail(e);
     }
+  }
+
+  public static Stream<DynamicNode> validateProfile(Profile profile, String spec) {
+    return validateProfile(profile, SchemaSpecification.load(spec));
+  }
+
+  public static Stream<DynamicNode> validateProfile(Profile profile, SchemaSpecification spec) {
+    var result = BaseSchemaValidator.validate(profile, spec, PlanetilerConfig.defaults());
+    return result.results().stream().map(test -> dynamicTest(test.example().name(), () -> {
+      var issues = test.issues().get();
+      if (!issues.isEmpty()) {
+        fail("Failed with " + issues.size() + " issues:\n" + String.join("\n", issues));
+      }
+    }));
   }
 }

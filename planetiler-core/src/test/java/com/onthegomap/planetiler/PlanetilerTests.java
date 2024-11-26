@@ -18,6 +18,7 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.files.ReadableFilesArchive;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
+import com.onthegomap.planetiler.geo.SimplifyMethod;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.geo.TileOrder;
 import com.onthegomap.planetiler.mbtiles.Mbtiles;
@@ -72,6 +73,7 @@ import org.slf4j.LoggerFactory;
 /**
  * In-memory tests with fake data and profiles to ensure all features work end-to-end.
  */
+@Slow
 class PlanetilerTests {
 
   private static final Logger LOGGER = LoggerFactory.getLogger(PlanetilerTests.class);
@@ -205,17 +207,6 @@ class PlanetilerTests {
     );
   }
 
-  private PlanetilerResults runWithOsmElements(
-    Map<String, String> args,
-    List<OsmElement> features,
-    BiConsumer<SourceFeature, FeatureCollector> profileFunction
-  ) throws Exception {
-    return run(
-      args,
-      (featureGroup, profile, config) -> processOsmFeatures(featureGroup, profile, config, features),
-      TestProfile.processSourceFeatures(profileFunction)
-    );
-  }
 
   private PlanetilerResults runWithOsmElements(
     Map<String, String> args,
@@ -300,8 +291,9 @@ class PlanetilerTests {
     ), results.metadata);
   }
 
-  @Test
-  void testSinglePoint() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void testSinglePoint(boolean anyGeom) throws Exception {
     double x = 0.5 + Z14_WIDTH / 4;
     double y = 0.5 + Z14_WIDTH / 4;
     double lat = GeoUtils.getWorldLat(y);
@@ -314,7 +306,7 @@ class PlanetilerTests {
           "attr", "value"
         ))
       ),
-      (in, features) -> features.point("layer")
+      (in, features) -> (anyGeom ? features.anyGeometry("layer") : features.point("layer"))
         .setZoomRange(13, 15)
         .setAttr("name", "name value")
         .inheritAttrFromSource("attr")
@@ -438,8 +430,92 @@ class PlanetilerTests {
     ), results.tiles);
   }
 
+  @ParameterizedTest
+  @CsvSource({
+    "false,RETAIN_IMPORTANT_POINTS",
+    "false,RETAIN_EFFECTIVE_AREAS",
+    "false,RETAIN_WEIGHTED_EFFECTIVE_AREAS",
+    "true,RETAIN_IMPORTANT_POINTS",
+  })
+  void testLineString(boolean anyGeom, SimplifyMethod simplifyStrategy) throws Exception {
+    double x1 = 0.5 + Z14_WIDTH / 2;
+    double y1 = 0.5 + Z14_WIDTH / 2;
+    double x2 = x1 + Z14_WIDTH;
+    double y2 = y1 + Z14_WIDTH;
+    double ymid = (y1 + y2) / 2;
+    double xmid = (x1 + x2) / 2;
+    double lat1 = GeoUtils.getWorldLat(y1);
+    double lng1 = GeoUtils.getWorldLon(x1);
+    double latMid = GeoUtils.getWorldLat(ymid);
+    double lngMid = GeoUtils.getWorldLon(xmid);
+    double lat2 = GeoUtils.getWorldLat(y2);
+    double lng2 = GeoUtils.getWorldLon(x2);
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      List.of(
+        newReaderFeature(newLineString(lng1, lat1, lngMid, latMid, lng2, lat2), Map.of(
+          "attr", "value"
+        ))
+      ),
+      (in, features) -> (anyGeom ? features.anyGeometry("layer") : features.line("layer"))
+        .setZoomRange(13, 14)
+        .setPixelTolerance(1)
+        .setSimplifyMethod(simplifyStrategy)
+        .setBufferPixels(4)
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+        feature(newLineString(128, 128, 260, 260), Map.of())
+      ),
+      TileCoord.ofXYZ(Z14_TILES / 2 + 1, Z14_TILES / 2 + 1, 14), List.of(
+        feature(newLineString(-4, -4, 128, 128), Map.of())
+      ),
+      TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), List.of(
+        feature(newLineString(64, 64, 192, 192), Map.of())
+      )
+    ), results.tiles);
+  }
+
   @Test
-  void testLineString() throws Exception {
+  void testPartialLine() throws Exception {
+    double x1 = 0.5 + Z14_WIDTH / 2;
+    double y1 = 0.5 + Z14_WIDTH / 2;
+    double x2 = x1 + Z14_WIDTH;
+    double y2 = y1 + Z14_WIDTH;
+    double lat1 = GeoUtils.getWorldLat(y1);
+    double lng1 = GeoUtils.getWorldLon(x1);
+    double lat2 = GeoUtils.getWorldLat(y2);
+    double lng2 = GeoUtils.getWorldLon(x2);
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      List.of(
+        newReaderFeature(newLineString(lng1, lat1, lng2, lat2), Map.of(
+          "attr", "value"
+        ))
+      ),
+      (in, features) -> features.partialLine("layer", 0, 0.5)
+        .setZoomRange(13, 14)
+        .setBufferPixels(4)
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+        feature(newLineString(128, 128, 256, 256), Map.of())
+      ),
+      TileCoord.ofXYZ(Z14_TILES / 2 + 1, Z14_TILES / 2 + 1, 14), List.of(
+        feature(newLineString(-4, -4, 0, 0), Map.of())
+      ),
+      TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), List.of(
+        feature(newLineString(64, 64, 128, 128), Map.of())
+      )
+    ), results.tiles);
+  }
+
+  @Test
+  void testLineWithPartialAttr() throws Exception {
     double x1 = 0.5 + Z14_WIDTH / 2;
     double y1 = 0.5 + Z14_WIDTH / 2;
     double x2 = x1 + Z14_WIDTH;
@@ -457,13 +533,16 @@ class PlanetilerTests {
         ))
       ),
       (in, features) -> features.line("layer")
+        .linearRange(0, 0.25).setAttrWithMinzoom("k", "v", 14)
+        .entireLine()
         .setZoomRange(13, 14)
         .setBufferPixels(4)
     );
 
     assertSubmap(Map.of(
       TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
-        feature(newLineString(128, 128, 260, 260), Map.of())
+        feature(newLineString(192, 192, 260, 260), Map.of()),
+        feature(newLineString(128, 128, 192, 192), Map.of("k", "v"))
       ),
       TileCoord.ofXYZ(Z14_TILES / 2 + 1, Z14_TILES / 2 + 1, 14), List.of(
         feature(newLineString(-4, -4, 128, 128), Map.of())
@@ -615,8 +694,9 @@ class PlanetilerTests {
     );
   }
 
-  @Test
-  void testPolygonWithHoleSpanningMultipleTiles() throws Exception {
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void testPolygonWithHoleSpanningMultipleTiles(boolean anyGeom) throws Exception {
     List<Coordinate> outerPoints = z14CoordinateList(
       0.5, 0.5,
       3.5, 0.5,
@@ -640,7 +720,7 @@ class PlanetilerTests {
           List.of(innerPoints)
         ), Map.of())
       ),
-      (in, features) -> features.polygon("layer")
+      (in, features) -> (anyGeom ? features.anyGeometry("layer") : features.polygon("layer"))
         .setZoomRange(12, 14)
         .setBufferPixels(4)
     );
@@ -703,7 +783,7 @@ class PlanetilerTests {
         ), Map.of())
       )),
       newTileEntry(Z14_TILES / 2 + 2, Z14_TILES / 2 + 1, 14, List.of(
-        feature(newPolygon(tileFill(5), List.of()), Map.of())
+        feature(newPolygon(tileFill(4), List.of()), Map.of())
       )),
       newTileEntry(Z14_TILES / 2 + 3, Z14_TILES / 2 + 1, 14, List.of(
         feature(tileLeft(4), Map.of())
@@ -747,7 +827,7 @@ class PlanetilerTests {
     );
 
     assertEquals(List.of(
-      feature(newPolygon(tileFill(5)), Map.of())
+      feature(newPolygon(tileFill(4)), Map.of())
     ), results.tiles.get(TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15)));
   }
 
@@ -765,7 +845,7 @@ class PlanetilerTests {
 
     assertEquals(5461, results.tiles.size());
     // spot-check one filled tile
-    assertEquals(List.of(rectangle(-5, 256 + 5).norm()), results.tiles.get(TileCoord.ofXYZ(
+    assertEquals(List.of(rectangle(-4, 256 + 4).norm()), results.tiles.get(TileCoord.ofXYZ(
       Z4_TILES / 2, Z4_TILES / 2, 4
     )).stream().map(d -> d.geometry().geom().norm()).toList());
   }
@@ -875,7 +955,7 @@ class PlanetilerTests {
         feature(newPoint(128, 128), Map.of(
           "attr", "value",
           "name", "name value"
-        ))
+        ), 11)
       )
     ), results.tiles);
   }
@@ -964,7 +1044,7 @@ class PlanetilerTests {
         feature(newLineString(128, 128, 192, 192), Map.of(
           "attr", "value",
           "name", "name value"
-        ))
+        ), 32)
       )
     ), results.tiles);
   }
@@ -1090,7 +1170,7 @@ class PlanetilerTests {
           "attr", "value",
           "name", "name value",
           "relname", "rel name"
-        ))
+        ), 173)
       )
     ), results.tiles);
   }
@@ -1152,20 +1232,21 @@ class PlanetilerTests {
 
   @Test
   void testPreprocessOsmNodesAndWays() throws Exception {
-    Set<Long> nodes1 = new HashSet<>();
+    HashMap<Long, Long> nodes1 = new HashMap<>();
     Set<Long> nodes2 = new HashSet<>();
     var profile = new Profile.NullProfile() {
       @Override
       public void preprocessOsmNode(OsmElement.Node node) {
         if (node.hasTag("a", "b")) {
-          nodes1.add(node.id());
+          nodes1.put(node.id(), node.id());
         }
       }
 
       @Override
       public void preprocessOsmWay(OsmElement.Way way) {
-        if (nodes1.contains(way.nodes().get(0))) {
-          nodes2.add(way.nodes().get(0));
+        Long featureId = nodes1.get(way.nodes().get(0));
+        if (featureId != null) {
+          nodes2.add(featureId);
         }
       }
 
@@ -2007,6 +2088,7 @@ class PlanetilerTests {
     "",
     "--write-threads=2 --process-threads=2 --feature-read-threads=2 --threads=4",
     "--free-osm-after-read",
+    "--compress-temp",
     "--osm-parse-node-bounds",
     "--output-format=pmtiles",
     "--output-format=csv",
@@ -2018,10 +2100,13 @@ class PlanetilerTests {
     "--tile-compression=none",
     "--tile-compression=gzip",
     "--output-layerstats",
-    "--max-point-buffer=1"
+    "--max-point-buffer=1",
+    "--osm-test-path=monaco-latest.lz4.osm.pbf",
   })
   void testPlanetilerRunner(String args) throws Exception {
-    Path originalOsm = TestUtils.pathToResource("monaco-latest.osm.pbf");
+    var argParsed = Arguments.fromArgs(args.split(" "));
+    Path originalOsm =
+      TestUtils.pathToResource(argParsed.getString("osm-test-path", "osm-test-path", "monaco-latest.osm.pbf"));
     Path tempOsm = tempDir.resolve("monaco-temp.osm.pbf");
     final TileCompression tileCompression = extractTileCompression(args);
 
@@ -2248,6 +2333,49 @@ class PlanetilerTests {
     }
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "",
+    "--write-threads=2 --process-threads=2 --feature-read-threads=2 --threads=4"
+  })
+  void testPlanetilerRunnerParquet(String args) throws Exception {
+    Path mbtiles = tempDir.resolve("output.mbtiles");
+
+    Planetiler.create(Arguments.fromArgs((args + " --tmpdir=" + tempDir.resolve("data")).split("\\s+")))
+      .setProfile(new Profile.NullProfile() {
+        @Override
+        public void processFeature(SourceFeature source, FeatureCollector features) {
+          features.polygon("buildings")
+            .setZoomRange(0, 14)
+            .setMinPixelSize(0)
+            .setAttr("id", source.getString("id"));
+        }
+      })
+      .addParquetSource("parquet", List.of(TestUtils.pathToResource("parquet").resolve("boston.parquet")))
+      .setOutput(mbtiles)
+      .run();
+
+    try (Mbtiles db = Mbtiles.newReadOnlyDatabase(mbtiles)) {
+      Set<String> uniqueIds = new HashSet<>();
+      long featureCount = 0;
+      var tileMap = TestUtils.getTileMap(db);
+      for (int z = 14; z >= 11; z--) {
+        var coord = TileCoord.aroundLngLat(-71.07448, 42.35626, z);
+        assertTrue(tileMap.containsKey(coord), "contain " + coord);
+      }
+      for (var tile : tileMap.values()) {
+        for (var feature : tile) {
+          feature.geometry().validate();
+          featureCount++;
+          uniqueIds.add((String) feature.attrs().get("id"));
+        }
+      }
+
+      assertTrue(featureCount > 0);
+      assertEquals(3, uniqueIds.size());
+    }
+  }
+
   private void runWithProfile(Path tempDir, Profile profile, boolean force) throws Exception {
     Planetiler.create(Arguments.of("tmpdir", tempDir, "force", Boolean.toString(force)))
       .setProfile(profile)
@@ -2337,7 +2465,7 @@ class PlanetilerTests {
       ),
       (in, features) -> features.polygon("layer")
         .setZoomRange(0, 2)
-        .setBufferPixels(0)
+        .setBufferPixels(1)
     );
   }
 
@@ -2437,8 +2565,13 @@ class PlanetilerTests {
     assertEquals(bboxResult.tiles, polyResult.tiles);
   }
 
-  @Test
-  void testSimplePolygon() throws Exception {
+  @ParameterizedTest
+  @CsvSource({
+    "RETAIN_IMPORTANT_POINTS",
+    "RETAIN_EFFECTIVE_AREAS",
+    "RETAIN_WEIGHTED_EFFECTIVE_AREAS",
+  })
+  void testSimplePolygon(SimplifyMethod strategy) throws Exception {
     List<Coordinate> points = z14PixelRectangle(0, 40);
 
     var results = runWithReaderFeatures(
@@ -2449,6 +2582,8 @@ class PlanetilerTests {
       (in, features) -> features.polygon("layer")
         .setZoomRange(0, 14)
         .setBufferPixels(0)
+        .setPixelTolerance(1)
+        .setSimplifyMethod(strategy)
         .setMinPixelSize(10) // should only show up z14 (40) z13 (20) and z12 (10)
     );
 
@@ -2596,6 +2731,17 @@ class PlanetilerTests {
     int z8tiles = 1 << 8;
     assertFalse(polyResultz8.tiles.containsKey(TileCoord.ofXYZ(z8tiles * 3 / 4, z8tiles * 5 / 8, 8)));
     assertTrue(polyResultz8.tiles.containsKey(TileCoord.ofXYZ(z8tiles * 3 / 4, z8tiles * 7 / 8, 8)));
+  }
+
+  @Test
+  void testDefaultLanguages() {
+    var planetiler = Planetiler.create(Arguments.of("languages", "default,en"))
+      .setDefaultLanguages(List.of("jbo", "tlh"));
+    var translations = planetiler.translations();
+    assertTrue(translations.careAboutLanguage("jbo"));
+    assertTrue(translations.careAboutLanguage("tlh"));
+    assertTrue(translations.careAboutLanguage("en"));
+    assertFalse(translations.careAboutLanguage("fr"));
   }
 
   @FunctionalInterface

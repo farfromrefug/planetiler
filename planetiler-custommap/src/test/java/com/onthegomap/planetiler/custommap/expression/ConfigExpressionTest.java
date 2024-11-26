@@ -5,23 +5,25 @@ import static com.onthegomap.planetiler.custommap.TestContexts.FEATURE_POST_MATC
 import static com.onthegomap.planetiler.custommap.TestContexts.PROCESS_FEATURE;
 import static com.onthegomap.planetiler.custommap.TestContexts.ROOT_CONTEXT;
 import static com.onthegomap.planetiler.custommap.expression.ConfigExpression.*;
-import static com.onthegomap.planetiler.expression.Expression.matchAny;
-import static com.onthegomap.planetiler.expression.Expression.or;
+import static com.onthegomap.planetiler.expression.Expression.*;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
+import com.google.common.collect.Lists;
 import com.onthegomap.planetiler.config.Arguments;
+import com.onthegomap.planetiler.custommap.BooleanExpressionParser;
 import com.onthegomap.planetiler.custommap.Contexts;
 import com.onthegomap.planetiler.custommap.TagValueProducer;
 import com.onthegomap.planetiler.custommap.TestContexts;
 import com.onthegomap.planetiler.expression.DataType;
-import com.onthegomap.planetiler.expression.Expression;
 import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 
 class ConfigExpressionTest {
   private static final ConfigExpression.Signature<Contexts.Root, Integer> ROOT = signature(ROOT_CONTEXT, Integer.class);
@@ -104,8 +106,8 @@ class ConfigExpressionTest {
       FEATURE_SIGNATURE,
       MultiExpression.of(List.of(
         MultiExpression.entry(script(FEATURE_SIGNATURE, "1 + size(feature.tags.a)"),
-          Expression.matchAny("a", "b")),
-        MultiExpression.entry(constOf(1), Expression.matchAny("a", "c"))
+          matchAny("a", "b")),
+        MultiExpression.entry(constOf(1), matchAny("a", "c"))
       ))
     ).apply(context));
   }
@@ -130,6 +132,96 @@ class ConfigExpressionTest {
       script(FEATURE_SIGNATURE, "feature.tags.a"),
 
       script(FEATURE_SIGNATURE, "feature.tags.a").simplify()
+    );
+  }
+
+  @Test
+  void testCantSimplifyDynamicLeftExpression() {
+    assertEquals(
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          matchAnyTyped(null, script(FEATURE_SIGNATURE.withOutput(Object.class), "feature.id + 1"), List.of(1, 2)
+          ))))),
+
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          BooleanExpressionParser.parse(Map.of("${feature.id + 1}", List.of(1, 2)), null, FEATURE_SIGNATURE.in())
+        )))).simplify()
+    );
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "feature.id",
+    "feature.osm_user_name",
+    "feature.osm_type",
+  })
+  void testSimplifySimpleLeftExpression(String varname) {
+    assertEquals(
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          matchAnyTyped(null, variable(FEATURE_SIGNATURE.withOutput(Object.class), varname), List.of(1, 2)
+          ))))),
+
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          BooleanExpressionParser.parse(Map.of("${" + varname + "}", List.of(1, 2)), null, FEATURE_SIGNATURE.in())
+        )))).simplify()
+    );
+  }
+
+  @Test
+  void testSimplifyExpressionToMatchSource() {
+    assertEquals(
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          or(matchSource("source1"), matchSource("source2"))
+        )))),
+
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          BooleanExpressionParser.parse(Map.of("${feature.source}", List.of("source1", "source2")), null,
+            FEATURE_SIGNATURE.in())
+        )))).simplify()
+    );
+  }
+
+  @Test
+  void testSimplifyExpressionToMatchSourceLayer() {
+    assertEquals(
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          or(matchSourceLayer("layer1"), matchSourceLayer("layer2"))
+        )))),
+
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          BooleanExpressionParser.parse(Map.of("${feature.source_layer}", List.of("layer1", "layer2")), null,
+            FEATURE_SIGNATURE.in())
+        )))).simplify()
+    );
+  }
+
+  @Test
+  void testDontSimplifyOtherSourceLayerCases() {
+    testDontSimplifyOtherSourceLayerCases("__any__", List.of());
+    testDontSimplifyOtherSourceLayerCases("", List.of(""));
+    testDontSimplifyOtherSourceLayerCases("prefix%", List.of("prefix%"));
+  }
+
+  private static void testDontSimplifyOtherSourceLayerCases(String in, List<?> out) {
+    assertEquals(
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          matchAnyTyped(null, variable(FEATURE_SIGNATURE.withOutput(Object.class), "feature.source_layer"),
+            out
+          ))))),
+
+      match(FEATURE_SIGNATURE, MultiExpression.of(List.of(
+        MultiExpression.entry(constOf(1),
+          BooleanExpressionParser.parse(Map.of("${feature.source_layer}", Lists.newArrayList(in)), null,
+            FEATURE_SIGNATURE.in())
+        )))).simplify()
     );
   }
 

@@ -22,8 +22,8 @@ for more of the backstory.
 
 ## Demo
 
-See the [live demo](https://onthegomap.github.io/planetiler-demo/) of vector tiles created by Planetiler and hosted by
-the [OpenStreetMap Americana Project](https://github.com/ZeLonewolf/openstreetmap-americana/).
+See the [live demo](https://onthegomap.github.io/planetiler-demo/) of vector tiles created by Planetiler
+and [hosted by OpenStreetMap US](https://github.com/osmus/tileservice).
 
 [![Planetiler Demo Screenshot](./diagrams/demo.png)](https://onthegomap.github.io/planetiler-demo/)
 [© OpenMapTiles](https://www.openmaptiles.org/) [© OpenStreetMap contributors](https://www.openstreetmap.org/copyright)
@@ -34,7 +34,7 @@ To generate a map of an area using the [OpenMapTiles profile](https://github.com
 you will need:
 
 - Java 21+ (see [CONTRIBUTING.md](CONTRIBUTING.md)) or [Docker](https://docs.docker.com/get-docker/)
-- at least 1GB of free disk space plus 5-10x the size of the `.osm.pbf` file
+- at least 1GB of free SSD disk space plus 5-10x the size of the `.osm.pbf` file
 - at least 0.5x as much free RAM as the input `.osm.pbf` file size
 
 #### To build the map:
@@ -84,7 +84,7 @@ You will need the full data sources to run anywhere besides Monaco.
 
 #### To view tiles locally:
 
-Using [Node.js](https://nodejs.org/en/download/):
+Using [Node.js](https://nodejs.org/en/download/package-manager):
 
 ```bash
 npm install -g tileserver-gl-light
@@ -103,6 +103,7 @@ Some common arguments:
 
 - `--output` tells planetiler where to write output to, and what format to write it in. For
   example `--output=australia.pmtiles` creates a pmtiles archive named `australia.pmtiles`.
+  It is best to specify the full path to the file. In docker image you should be using `/data/australia.pmtiles` to let the docker know where to write the file.
 - `--download` downloads input sources automatically and `--only-download` exits after downloading
 - `--area=monaco` downloads a `.osm.pbf` extract from [Geofabrik](https://download.geofabrik.de/)
 - `--osm-path=path/to/file.osm.pbf` points Planetiler at an existing OSM extract on disk
@@ -334,6 +335,8 @@ Planetiler is made possible by these awesome open source projects:
   Google's [Common Expression Language](https://github.com/google/cel-spec) that powers dynamic expressions embedded in
   schema config files.
 - [PMTiles](https://github.com/protomaps/PMTiles) optimized tile storage format
+- [Apache Parquet](https://github.com/apache/parquet-mr) to support reading geoparquet files in java (with dependencies
+  minimized by [parquet-floor](https://github.com/strategicblue/parquet-floor))
 
 See [NOTICE.md](NOTICE.md) for a full list and license details.
 

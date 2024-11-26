@@ -3,8 +3,10 @@ package com.onthegomap.planetiler.custommap;
 import static com.onthegomap.planetiler.expression.Expression.matchAnyTyped;
 import static com.onthegomap.planetiler.expression.Expression.matchField;
 import static com.onthegomap.planetiler.expression.Expression.not;
+import static com.onthegomap.planetiler.expression.Expression.or;
 
 import com.onthegomap.planetiler.custommap.expression.BooleanExpressionScript;
+import com.onthegomap.planetiler.custommap.expression.ConfigExpression;
 import com.onthegomap.planetiler.custommap.expression.ConfigExpressionScript;
 import com.onthegomap.planetiler.custommap.expression.ParseException;
 import com.onthegomap.planetiler.custommap.expression.ScriptContext;
@@ -110,25 +112,38 @@ public class BooleanExpressionParser<T extends ScriptContext> {
     } else if (IS_NOT.test(key)) {
       // __not__ negates its children
       return not(parse(value));
-    } else if (value == null || IS_ANY.test(value.toString()) ||
-      (value instanceof Collection<?> values &&
-        values.stream().anyMatch(d -> d != null && IS_ANY.test(d.toString().trim())))) {
-      //If only a key is provided, with no value, match any object tagged with that key.
-      return matchField(unescape(key));
-
-    } else if (value instanceof Collection<?> values) {
-      //If a collection is provided, match any of these values.
-      return matchAnyTyped(
-        unescape(key),
-        tagValueProducer.valueGetterForKey(key),
-        values.stream().map(BooleanExpressionParser::unescape).toList());
-
     } else {
-      //Otherwise, a key and single value were passed, so match that exact tag
-      return matchAnyTyped(
-        unescape(key),
-        tagValueProducer.valueGetterForKey(key),
-        unescape(value));
+      //If only a key is provided, with no value, match any object tagged with that key.
+      boolean isAny = value == null || IS_ANY.test(value.toString()) ||
+        (value instanceof Collection<?> values &&
+          values.stream().anyMatch(d -> d != null && IS_ANY.test(d.toString().trim())));
+      //If a collection or single item are provided, match any of these values.
+      List<?> values = (value instanceof Collection<?> items ? items : value == null ? List.of() : List.of(value))
+        .stream().map(BooleanExpressionParser::unescape).toList();
+      if (ConfigExpressionScript.isScript(key)) {
+        var expression = ConfigExpressionScript.parse(ConfigExpressionScript.extractScript(key), context).simplify();
+        if (isAny) {
+          values = List.of();
+        }
+        var result = matchAnyTyped(null, expression, values);
+        if (!values.isEmpty() && result.pattern() == null && !result.isMatchAnything() && !result.matchWhenMissing() &&
+          expression instanceof ConfigExpression.Variable<?, ?>(var ignored,var name)) {
+          if (name.equals("feature.source")) {
+            return or(values.stream().filter(String.class::isInstance).map(String.class::cast)
+              .map(Expression::matchSource).toList());
+          } else if (name.equals("feature.source_layer")) {
+            return or(values.stream().filter(String.class::isInstance).map(String.class::cast)
+              .map(Expression::matchSourceLayer).toList());
+          }
+        }
+        return result;
+      }
+      String field = unescape(key);
+      if (isAny) {
+        return matchField(field);
+      } else {
+        return matchAnyTyped(field, tagValueProducer.valueGetterForKey(key), values);
+      }
     }
   }
 }

@@ -1,14 +1,21 @@
 package com.onthegomap.planetiler;
 
+import static com.onthegomap.planetiler.util.MutableCollections.makeMutable;
+
+import com.onthegomap.planetiler.config.PlanetilerConfig;
+import com.onthegomap.planetiler.expression.Expression;
+import com.onthegomap.planetiler.expression.MultiExpression;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
 import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
+import com.onthegomap.planetiler.util.MutableCollections;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Consumer;
 
 /**
@@ -21,7 +28,7 @@ import java.util.function.Consumer;
  * <li>{@link FeatureProcessor} to handle features from a particular source (added through
  * {@link #registerSourceHandler(String, FeatureProcessor)})</li>
  * <li>{@link FinishHandler} to be notified whenever we finish processing each source</li>
- * <li>{@link LayerPostProcesser} to post-process features in a layer before rendering the output tile</li>
+ * <li>{@link LayerPostProcessor} to post-process features in a layer before rendering the output tile</li>
  * <li>{@link TilePostProcessor} to post-process features in a tile before rendering the output tile</li>
  * </ul>
  * See {@code OpenMapTilesProfile} for a full implementation using this framework.
@@ -37,12 +44,74 @@ public abstract class ForwardingProfile implements Profile {
   private final List<OsmRelationPreprocessor> osmRelationPreprocessors = new ArrayList<>();
   /** Handlers that get a callback when each source is finished reading. */
   private final List<FinishHandler> finishHandlers = new ArrayList<>();
-  /** Map from layer name to its handler if it implements {@link LayerPostProcesser}. */
-  private final Map<String, List<LayerPostProcesser>> layerPostProcessors = new HashMap<>();
+  /** Map from layer name to its handler if it implements {@link LayerPostProcessor}. */
+  private final Map<String, List<LayerPostProcessor>> layerPostProcessors = new HashMap<>();
   /** List of handlers that implement {@link TilePostProcessor}. */
   private final List<TilePostProcessor> tilePostProcessors = new ArrayList<>();
-  /** Map from source ID to its handler if it implements {@link FeatureProcessor}. */
-  private final Map<String, List<FeatureProcessor>> sourceElementProcessors = new HashMap<>();
+  /** List of handlers that implements {@link FeatureProcessor} along with a filter expression. */
+  private final List<MultiExpression.Entry<FeatureProcessor>> sourceElementProcessors = new CopyOnWriteArrayList<>();
+  private final List<String> onlyLayers;
+  private final List<String> excludeLayers;
+  @SuppressWarnings("java:S3077")
+  private volatile MultiExpression.Index<FeatureProcessor> indexedSourceElementProcessors = null;
+
+  protected ForwardingProfile(PlanetilerConfig config) {
+    onlyLayers = config.arguments().getList("only_layers", "Include only certain layers", List.of());
+    excludeLayers = config.arguments().getList("exclude_layers", "Exclude certain layers", List.of());
+  }
+
+  protected ForwardingProfile(PlanetilerConfig config, Handler... handlers) {
+    this(config);
+    for (var handler : handlers) {
+      registerHandler(handler);
+    }
+  }
+
+  protected ForwardingProfile() {
+    onlyLayers = List.of();
+    excludeLayers = List.of();
+  }
+
+  protected ForwardingProfile(Handler... handlers) {
+    onlyLayers = List.of();
+    excludeLayers = List.of();
+    for (var handler : handlers) {
+      registerHandler(handler);
+    }
+  }
+
+  private boolean caresAboutLayer(String layer) {
+    var dependencies = dependsOnLayer();
+    return ((onlyLayers.isEmpty() || onlyLayers.contains(layer)) && !excludeLayers.contains(layer)) ||
+      this.handlers.stream()
+        .filter(HandlerForLayer.class::isInstance)
+        .map(HandlerForLayer.class::cast)
+        .filter(l -> !l.name().equals(layer))
+        .anyMatch(
+          existing -> dependencies.containsKey(existing.name()) && dependencies.get(existing.name()).contains(layer));
+  }
+
+  public boolean caresAboutLayer(Object obj) {
+    return !(obj instanceof HandlerForLayer l) || caresAboutLayer(l.name());
+  }
+
+  /**
+   * Indicate to {@link #caresAboutLayer(String)} what layers (dependents) rely on other layers (dependencies) so that
+   * methods like {@link #registerFeatureHandler(FeatureProcessor)}, {@link #registerHandler(Handler)} or
+   * {@link #registerSourceHandler(String, FeatureProcessor)} do not block registration of those dependencies.
+   * <p>
+   * Dependencies are described as a map with dependent layer names as keys and lists containing dependency layer names
+   * as map values. Example: Layer named {@code transportation_name} depends on layer named {@code transportation}:
+   * <p>
+   * {@snippet :
+   * Map.of("transportation_name", List.of("transportation"));
+   * }
+   *
+   * @return a map describing dependencies
+   */
+  public Map<String, List<String>> dependsOnLayer() {
+    return Map.of();
+  }
 
   /**
    * Call {@code processor} for every element in {@code source}.
@@ -51,15 +120,39 @@ public abstract class ForwardingProfile implements Profile {
    * @param processor handler that will process elements in that source
    */
   public void registerSourceHandler(String source, FeatureProcessor processor) {
-    sourceElementProcessors.computeIfAbsent(source, name -> new ArrayList<>())
-      .add(processor);
+    if (!caresAboutLayer(processor)) {
+      return;
+    }
+    sourceElementProcessors
+      .add(MultiExpression.entry(processor, Expression.and(Expression.matchSource(source), processor.filter())));
+    synchronized (sourceElementProcessors) {
+      indexedSourceElementProcessors = null;
+    }
+  }
+
+  /**
+   * Call {@code processor} for every element.
+   *
+   * @param processor handler that will process elements in that source
+   */
+  public void registerFeatureHandler(FeatureProcessor processor) {
+    if (!caresAboutLayer(processor)) {
+      return;
+    }
+    sourceElementProcessors.add(MultiExpression.entry(processor, processor.filter()));
+    synchronized (sourceElementProcessors) {
+      indexedSourceElementProcessors = null;
+    }
   }
 
   /**
    * Call {@code handler} for different events based on which interfaces {@code handler} implements:
-   * {@link OsmRelationPreprocessor}, {@link FinishHandler}, {@link TilePostProcessor} or {@link LayerPostProcesser}.
+   * {@link OsmRelationPreprocessor}, {@link FinishHandler}, {@link TilePostProcessor} or {@link LayerPostProcessor}.
    */
   public void registerHandler(Handler handler) {
+    if (!caresAboutLayer(handler)) {
+      return;
+    }
     this.handlers.add(handler);
     if (handler instanceof OsmNodePreprocessor osmNodePreprocessor) {
       osmNodePreprocessors.add(osmNodePreprocessor);
@@ -73,12 +166,15 @@ public abstract class ForwardingProfile implements Profile {
     if (handler instanceof FinishHandler finishHandler) {
       finishHandlers.add(finishHandler);
     }
-    if (handler instanceof LayerPostProcesser postProcessor) {
+    if (handler instanceof LayerPostProcessor postProcessor) {
       layerPostProcessors.computeIfAbsent(postProcessor.name(), name -> new ArrayList<>())
         .add(postProcessor);
     }
     if (handler instanceof TilePostProcessor postProcessor) {
       tilePostProcessors.add(postProcessor);
+    }
+    if (handler instanceof FeatureProcessor processor) {
+      registerFeatureHandler(processor);
     }
   }
 
@@ -117,32 +213,47 @@ public abstract class ForwardingProfile implements Profile {
   @Override
   public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
     // delegate source feature processing to each handler for that source
-    var handlers = sourceElementProcessors.get(sourceFeature.getSource());
-    if (handlers != null) {
-      for (var handler : handlers) {
-        handler.processFeature(sourceFeature, features);
-        // TODO extract common handling for expression-based filtering from basemap to this
-        // common profile when we have another use-case for it.
+    for (var handler : getHandlerIndex().getMatches(sourceFeature)) {
+      handler.processFeature(sourceFeature, features);
+    }
+  }
+
+  private MultiExpression.Index<FeatureProcessor> getHandlerIndex() {
+    MultiExpression.Index<FeatureProcessor> result = indexedSourceElementProcessors;
+    if (result == null) {
+      synchronized (sourceElementProcessors) {
+        result = indexedSourceElementProcessors;
+        if (result == null) {
+          indexedSourceElementProcessors = result = MultiExpression.of(sourceElementProcessors).index();
+        }
       }
     }
+    return result;
   }
 
   @Override
   public boolean caresAboutSource(String name) {
-    return sourceElementProcessors.containsKey(name);
+    return caresAbout(Expression.PartialInput.ofSource(name));
+  }
+
+  @Override
+  public boolean caresAbout(Expression.PartialInput input) {
+    return sourceElementProcessors.stream().anyMatch(e -> e.expression()
+      .partialEvaluate(input)
+      .simplify() != Expression.FALSE);
   }
 
   @Override
   public List<VectorTile.Feature> postProcessLayerFeatures(String layer, int zoom, List<VectorTile.Feature> items)
     throws GeometryException {
     // delegate feature post-processing to each layer, if it implements FeaturePostProcessor
-    List<LayerPostProcesser> postProcessers = layerPostProcessors.get(layer);
-    List<VectorTile.Feature> result = items;
+    List<LayerPostProcessor> postProcessers = layerPostProcessors.get(layer);
+    List<VectorTile.Feature> result = makeMutable(items);
     if (postProcessers != null) {
       for (var handler : postProcessers) {
         var thisResult = handler.postProcess(zoom, result);
-        if (thisResult != null) {
-          result = thisResult;
+        if (thisResult != null && result != thisResult) {
+          result = makeMutable(thisResult);
         }
       }
     }
@@ -152,12 +263,12 @@ public abstract class ForwardingProfile implements Profile {
   @Override
   public Map<String, List<VectorTile.Feature>> postProcessTileFeatures(TileCoord tileCoord,
     Map<String, List<VectorTile.Feature>> layers) throws GeometryException {
-    var result = layers;
+    var result = MutableCollections.makeMutableMultimap(layers);
     for (TilePostProcessor postProcessor : tilePostProcessors) {
       // TODO catch failures to isolate from other tile postprocessors?
       var thisResult = postProcessor.postProcessTile(tileCoord, result);
-      if (thisResult != null) {
-        result = thisResult;
+      if (thisResult != null && result != thisResult) {
+        result = MutableCollections.makeMutableMultimap(thisResult);
       }
     }
     return result;
@@ -239,7 +350,7 @@ public abstract class ForwardingProfile implements Profile {
   }
 
   /** Handlers should implement this interface to post-process vector tile features before emitting an output layer. */
-  public interface LayerPostProcesser extends HandlerForLayer {
+  public interface LayerPostProcessor extends HandlerForLayer {
 
     /**
      * Apply any post-processing to features in this output layer of a tile before writing it to the output archive.
@@ -250,9 +361,13 @@ public abstract class ForwardingProfile implements Profile {
     List<VectorTile.Feature> postProcess(int zoom, List<VectorTile.Feature> items) throws GeometryException;
   }
 
-  /** @deprecated use {@link LayerPostProcesser} or {@link TilePostProcessor} instead */
+  /** @deprecated use {@link LayerPostProcessor} instead */
   @Deprecated(forRemoval = true)
-  public interface FeaturePostProcessor extends LayerPostProcesser {}
+  public interface LayerPostProcesser extends LayerPostProcessor {}
+
+  /** @deprecated use {@link LayerPostProcessor} or {@link TilePostProcessor} instead */
+  @Deprecated(forRemoval = true)
+  public interface FeaturePostProcessor extends LayerPostProcessor {}
 
   /**
    * Handlers should implement this interface to post-process all features in a vector tile before writing to an
@@ -271,13 +386,12 @@ public abstract class ForwardingProfile implements Profile {
   }
 
   /** Handlers should implement this interface to process input features from a given source ID. */
-  public interface FeatureProcessor {
+  @FunctionalInterface
+  public interface FeatureProcessor extends com.onthegomap.planetiler.FeatureProcessor<SourceFeature>, Handler {
 
-    /**
-     * Process an input element from a source feature.
-     *
-     * @see Profile#processFeature(SourceFeature, FeatureCollector)
-     */
-    void processFeature(SourceFeature feature, FeatureCollector features);
+    /** Returns an {@link Expression} that limits the features that this processor gets called for. */
+    default Expression filter() {
+      return Expression.TRUE;
+    }
   }
 }

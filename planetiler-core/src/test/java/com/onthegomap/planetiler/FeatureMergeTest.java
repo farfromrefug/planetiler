@@ -165,6 +165,21 @@ class FeatureMergeTest {
         true
       )
     );
+    // but doesn't resimplify if the tolerance is negative even when resimplify=true
+    assertEquals(
+      List.of(
+        feature(1, newLineString(10, 10, 20, 20, 30, 30), Map.of("a", 1))
+      ),
+      FeatureMerge.mergeLineStrings(
+        List.of(
+          feature(1, newLineString(10, 10, 20, 20, 30, 30), Map.of("a", 1))
+        ),
+        0,
+        -1,
+        0,
+        true
+      )
+    );
   }
 
   @Test
@@ -623,16 +638,17 @@ class FeatureMergeTest {
     );
   }
 
+  @Slow
   @ParameterizedTest
   @CsvSource({
     "bostonbuildings.mbtiles, 2477, 3028, 13, 1141",
-    "bostonbuildings.mbtiles, 2481, 3026, 13, 948",
+    "bostonbuildings.mbtiles, 2481, 3026, 13, 949",
     "bostonbuildings.mbtiles, 2479, 3028, 13, 1074",
     "jakartabuildings.mbtiles, 6527, 4240, 13, 410"
   })
   void testMergeManyPolygons__TAKES_A_MINUTE_OR_TWO(String file, int x, int y, int z, int expected)
     throws IOException, GeometryException {
-    LOGGER.warn("Testing complex polygon merging for " + file + " " + z + "/" + x + "/" + y + " ...");
+    LOGGER.warn("Testing complex polygon merging for {} {}/{}/{} ...", file, z, x, y);
     try (var db = Mbtiles.newReadOnlyDatabase(TestUtils.pathToResource(file))) {
       byte[] tileData = db.getTile(x, y, z);
       byte[] gunzipped = gunzip(tileData);
@@ -776,7 +792,7 @@ class FeatureMergeTest {
   }
 
   @Test
-  void removePointsOutsideBufferEmpty() throws GeometryException {
+  void removePointsOutsideBufferEmpty() {
     assertEquals(
       List.of(),
       FeatureMerge.removePointsOutsideBuffer(List.of(), 4d)

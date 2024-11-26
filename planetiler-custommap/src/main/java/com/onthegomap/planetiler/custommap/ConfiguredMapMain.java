@@ -5,6 +5,7 @@ import com.onthegomap.planetiler.config.Arguments;
 import com.onthegomap.planetiler.custommap.configschema.DataSourceType;
 import com.onthegomap.planetiler.custommap.configschema.SchemaConfig;
 import com.onthegomap.planetiler.custommap.expression.ParseException;
+import com.onthegomap.planetiler.util.YAML;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
@@ -61,6 +62,7 @@ public class ConfiguredMapMain {
 
     DataSourceType sourceType = source.type();
     Path localPath = source.localPath();
+    String projection = source.projection();
     if (localPath == null) {
       if (source.url() == null) {
         throw new ParseException("Must provide either a url or path for " + source.id());
@@ -70,8 +72,8 @@ public class ConfiguredMapMain {
 
     switch (sourceType) {
       case OSM -> planetiler.addOsmSource(source.id(), localPath, source.url());
-      case SHAPEFILE -> planetiler.addShapefileSource(source.id(), localPath, source.url());
-      case GEOPACKAGE -> planetiler.addGeoPackageSource(source.id(), localPath, source.url());
+      case SHAPEFILE -> planetiler.addShapefileSource(projection, source.id(), localPath, source.url());
+      case GEOPACKAGE -> planetiler.addGeoPackageSource(projection, source.id(), localPath, source.url());
       default -> throw new IllegalArgumentException("Unhandled source type for " + source.id() + ": " + sourceType);
     }
   }

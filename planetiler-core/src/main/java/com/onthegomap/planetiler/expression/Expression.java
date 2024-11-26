@@ -2,15 +2,18 @@ package com.onthegomap.planetiler.expression;
 
 import static com.onthegomap.planetiler.expression.DataType.GET_TAG;
 
-import com.google.common.base.Joiner;
+import com.onthegomap.planetiler.geo.GeometryType;
+import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.WithGeometryType;
 import com.onthegomap.planetiler.reader.WithTags;
 import com.onthegomap.planetiler.util.Format;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
-import java.util.function.BiFunction;
+import java.util.function.Consumer;
 import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -28,6 +31,7 @@ import org.slf4j.LoggerFactory;
  * }
  */
 // TODO rename to BooleanExpression
+@FunctionalInterface
 public interface Expression extends Simplifiable<Expression> {
   Logger LOGGER = LoggerFactory.getLogger(Expression.class);
 
@@ -46,7 +50,7 @@ public interface Expression extends Simplifiable<Expression> {
     return and(List.of(children));
   }
 
-  static And and(List<Expression> children) {
+  static And and(List<? extends Expression> children) {
     return new And(children);
   }
 
@@ -54,7 +58,7 @@ public interface Expression extends Simplifiable<Expression> {
     return or(List.of(children));
   }
 
-  static Or or(List<Expression> children) {
+  static Or or(List<? extends Expression> children) {
     return new Or(children);
   }
 
@@ -86,7 +90,7 @@ public interface Expression extends Simplifiable<Expression> {
    * <p>
    * {@code values} can contain exact matches, "%text%" to match any value containing "text", or "" to match any value.
    */
-  static MatchAny matchAnyTyped(String field, BiFunction<WithTags, String, Object> typeGetter, Object... values) {
+  static MatchAny matchAnyTyped(String field, TypedGetter typeGetter, Object... values) {
     return matchAnyTyped(field, typeGetter, List.of(values));
   }
 
@@ -96,8 +100,7 @@ public interface Expression extends Simplifiable<Expression> {
    * <p>
    * {@code values} can contain exact matches, "%text%" to match any value containing "text", or "" to match any value.
    */
-  static MatchAny matchAnyTyped(String field, BiFunction<WithTags, String, Object> typeGetter,
-    List<?> values) {
+  static MatchAny matchAnyTyped(String field, TypedGetter typeGetter, List<?> values) {
     return MatchAny.from(field, typeGetter, values);
   }
 
@@ -123,7 +126,33 @@ public interface Expression extends Simplifiable<Expression> {
     return new MatchType(type);
   }
 
-  private static String generateJavaCodeList(List<Expression> items) {
+  /**
+   * Returns an expression that evaluates to true if the geometry of an element matches {@code type}.
+   */
+  static MatchType matchGeometryType(GeometryType type) {
+    return new MatchType(switch (type) {
+      case POINT -> POINT_TYPE;
+      case LINE -> LINESTRING_TYPE;
+      case POLYGON -> POLYGON_TYPE;
+      case null, default -> throw new IllegalArgumentException("Unsupported type: " + type);
+    });
+  }
+
+  /**
+   * Returns an expression that evaluates to true if the source of an element matches {@code source}.
+   */
+  static MatchSource matchSource(String source) {
+    return new MatchSource(source);
+  }
+
+  /**
+   * Returns an expression that evaluates to true if the source layer of an element matches {@code layer}.
+   */
+  static MatchSourceLayer matchSourceLayer(String layer) {
+    return new MatchSourceLayer(layer);
+  }
+
+  private static String generateJavaCodeList(List<? extends Expression> items) {
     return items.stream().map(Expression::generateJavaCode).collect(Collectors.joining(", "));
   }
 
@@ -148,6 +177,19 @@ public interface Expression extends Simplifiable<Expression> {
     }
   }
 
+  /** Calls {@code fn} for every expression within the current one. */
+  default void visit(Consumer<Expression> fn) {
+    fn.accept(this);
+    switch (this) {
+      case Not(var child) -> child.visit(fn);
+      case Or(var children) -> children.forEach(child -> child.visit(fn));
+      case And(var children) -> children.forEach(child -> child.visit(fn));
+      default -> {
+        // already called fn, and no nested children
+      }
+    }
+  }
+
   /** Returns true if this expression or any subexpression matches {@code filter}. */
   default boolean contains(Predicate<Expression> filter) {
     if (filter.test(this)) {
@@ -162,6 +204,10 @@ public interface Expression extends Simplifiable<Expression> {
     }
   }
 
+  private static Expression constBool(boolean value) {
+    return value ? TRUE : FALSE;
+  }
+
   /**
    * Returns true if this expression matches an input element.
    *
@@ -170,6 +216,20 @@ public interface Expression extends Simplifiable<Expression> {
    * @return true if this expression matches the input element
    */
   boolean evaluate(WithTags input, List<String> matchKeys);
+
+  /**
+   * Returns a copy of this expression where any parts that the value is known replaced with {@link #TRUE} or
+   * {@link #FALSE} for a set of features where {@link PartialInput} are known ahead of time (ie. a hive-partitioned
+   * parquet input file).
+   */
+  default Expression partialEvaluate(PartialInput input) {
+    return switch (this) {
+      case Not(var expr) -> not(expr.partialEvaluate(input));
+      case And(var exprs) -> and(exprs.stream().map(e -> e.partialEvaluate(input)).toList());
+      case Or(var exprs) -> or(exprs.stream().map(e -> e.partialEvaluate(input)).toList());
+      default -> this;
+    };
+  }
 
   //A list that silently drops all additions
   class NoopList<T> extends ArrayList<T> {
@@ -190,7 +250,9 @@ public interface Expression extends Simplifiable<Expression> {
   }
 
   /** Returns Java code that can be used to reconstruct this expression. */
-  String generateJavaCode();
+  default String generateJavaCode() {
+    throw new UnsupportedOperationException();
+  }
 
   /** A constant boolean value. */
   record Constant(boolean value, @Override String generateJavaCode) implements Expression {
@@ -205,7 +267,7 @@ public interface Expression extends Simplifiable<Expression> {
     }
   }
 
-  record And(List<Expression> children) implements Expression {
+  record And(List<? extends Expression> children) implements Expression {
 
     @Override
     public String generateJavaCode() {
@@ -243,7 +305,7 @@ public interface Expression extends Simplifiable<Expression> {
     }
   }
 
-  record Or(List<Expression> children) implements Expression {
+  record Or(List<? extends Expression> children) implements Expression {
 
     @Override
     public String generateJavaCode() {
@@ -329,8 +391,8 @@ public interface Expression extends Simplifiable<Expression> {
   }
 
   /**
-   * Evaluates to true if the value for {@code field} tag is any of {@code exactMatches} or contains any of {@code
-   * wildcards}.
+   * Evaluates to true if the value for {@code field} tag is any of {@code exactMatches} or contains any of
+   * {@code wildcards}.
    *
    * @param values           all raw string values that were initially provided
    * @param exactMatches     the input {@code values} that should be treated as exact matches
@@ -341,10 +403,10 @@ public interface Expression extends Simplifiable<Expression> {
     String field, List<?> values, Set<String> exactMatches,
     Pattern pattern,
     boolean matchWhenMissing,
-    BiFunction<WithTags, String, Object> valueGetter
+    TypedGetter valueGetter
   ) implements Expression {
 
-    static MatchAny from(String field, BiFunction<WithTags, String, Object> valueGetter, List<?> values) {
+    static MatchAny from(String field, TypedGetter valueGetter, List<?> values) {
       List<String> exactMatches = new ArrayList<>();
       List<String> patterns = new ArrayList<>();
 
@@ -405,11 +467,40 @@ public interface Expression extends Simplifiable<Expression> {
     @Override
     public boolean evaluate(WithTags input, List<String> matchKeys) {
       Object value = valueGetter.apply(input, field);
+      return evaluate(matchKeys, value);
+    }
+
+    @Override
+    public Expression partialEvaluate(PartialInput input) {
+      if (field == null) {
+        // dynamic getters always need to be evaluated
+        return this;
+      }
+      Object value = input.getTag(field);
+      return value == null ? this : constBool(evaluate(new ArrayList<>(), value));
+    }
+
+    private boolean evaluate(List<String> matchKeys, Object value) {
       if (value == null || "".equals(value)) {
         return matchWhenMissing;
+      } else if (value instanceof Collection<?> c) {
+        if (c.isEmpty()) {
+          return matchWhenMissing;
+        } else {
+          for (var item : c) {
+            if (evaluate(matchKeys, item)) {
+              return true;
+            }
+          }
+          return false;
+        }
+      } else if (value instanceof Map<?, ?>) {
+        return false;
       } else {
         String str = value.toString();
-        if (exactMatches.contains(str)) {
+        // when field is null, we rely on a dynamic getter function so when exactMatches is empty we match
+        // on any value
+        if (exactMatches.contains(str) || (field == null && exactMatches.isEmpty())) {
           matchKeys.add(field);
           return true;
         }
@@ -423,7 +514,13 @@ public interface Expression extends Simplifiable<Expression> {
 
     @Override
     public Expression simplifyOnce() {
-      return isMatchAnything() ? matchField(field) : this;
+      if (isMatchAnything()) {
+        return matchField(field);
+      } else if (valueGetter instanceof Simplifiable<?> simplifiable) {
+        return new MatchAny(field, values, exactMatches, pattern, matchWhenMissing,
+          (TypedGetter) simplifiable.simplifyOnce());
+      }
+      return this;
     }
 
     @Override
@@ -470,6 +567,11 @@ public interface Expression extends Simplifiable<Expression> {
     public int hashCode() {
       return Objects.hash(field, values, exactMatches, patternString(), matchWhenMissing, valueGetter);
     }
+
+    public boolean mustAlwaysEvaluate() {
+      // when field is null we rely on a dynamic getter function
+      return field == null || matchWhenMissing;
+    }
   }
 
   /** Evaluates to true if an input element contains any value for {@code field} tag. */
@@ -483,11 +585,16 @@ public interface Expression extends Simplifiable<Expression> {
     @Override
     public boolean evaluate(WithTags input, List<String> matchKeys) {
       Object value = input.getTag(field);
-      if (value != null && !"".equals(value)) {
+      if (value != null && !"".equals(value) && !(value instanceof Collection<?> c && c.isEmpty())) {
         matchKeys.add(field);
         return true;
       }
       return false;
+    }
+
+    @Override
+    public Expression partialEvaluate(PartialInput input) {
+      return input.hasTag(field) ? TRUE : this;
     }
   }
 
@@ -513,6 +620,91 @@ public interface Expression extends Simplifiable<Expression> {
       } else {
         return false;
       }
+    }
+
+    @Override
+    public Expression partialEvaluate(PartialInput input) {
+      return input.types.isEmpty() || input.types.contains(GeometryType.UNKNOWN) ? this :
+        partialEvaluateContains(input.types, switch (type) {
+          case LINESTRING_TYPE -> GeometryType.LINE;
+          case POLYGON_TYPE -> GeometryType.POLYGON;
+          case POINT_TYPE -> GeometryType.POINT;
+          default -> GeometryType.UNKNOWN;
+        }, this);
+    }
+  }
+
+  /**
+   * Evaluates to true if an input element has source matching {@code source}.
+   */
+  record MatchSource(String source) implements Expression {
+
+    @Override
+    public String generateJavaCode() {
+      return "matchSource(" + Format.quote(source) + ")";
+    }
+
+    @Override
+    public boolean evaluate(WithTags input, List<String> matchKeys) {
+      return input instanceof SourceFeature feature && source.equals(feature.getSource());
+    }
+
+    @Override
+    public Expression partialEvaluate(PartialInput input) {
+      return partialEvaluateContains(input.source, source, this);
+    }
+  }
+
+  /**
+   * Evaluates to true if an input element has source layer matching {@code layer}.
+   */
+  record MatchSourceLayer(String layer) implements Expression {
+
+    @Override
+    public String generateJavaCode() {
+      return "matchSourceLayer(" + Format.quote(layer) + ")";
+    }
+
+    @Override
+    public boolean evaluate(WithTags input, List<String> matchKeys) {
+      return input instanceof SourceFeature feature && layer.equals(feature.getSourceLayer());
+    }
+
+    @Override
+    public Expression partialEvaluate(PartialInput input) {
+      return partialEvaluateContains(input.layer, layer, this);
+    }
+  }
+
+  private static <T> Expression partialEvaluateContains(Set<T> set, T item, Expression self) {
+    if (set.isEmpty()) {
+      return self;
+    } else if (set.size() == 1) {
+      return constBool(set.contains(item));
+    } else if (set.contains(item)) {
+      return self;
+    } else {
+      return FALSE;
+    }
+  }
+
+  /**
+   * Partial attributes of a set of features that are known ahead of time, for example a hive-partitioned parquet input
+   * file.
+   * <p>
+   * Features within this set will only add tags but not change them, and the source/layer/geometry type will be one of
+   * the values specified in those sets. If the set is empty, the values are not known ahead of time.
+   */
+  record PartialInput(Set<String> source, Set<String> layer, Map<String, Object> tags, Set<GeometryType> types)
+    implements WithTags {
+
+    public static PartialInput ofSource(String source) {
+      return new PartialInput(Set.of(source), Set.of(), Map.of(), Set.of());
+    }
+
+    @Override
+    public Map<String, Object> tags() {
+      return tags == null ? Map.of() : tags;
     }
   }
 }

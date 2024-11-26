@@ -37,6 +37,9 @@ import java.net.http.HttpResponse.BodyHandlers;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -59,8 +62,8 @@ public class Wikidata {
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
   private static final Logger LOGGER = LoggerFactory.getLogger(Wikidata.class);
-  private static final Pattern wikidataIRIMatcher = Pattern.compile("http://www.wikidata.org/entity/Q([0-9]+)");
-  private static final Pattern qidPattern = Pattern.compile("Q([0-9]+)");
+  private static final Pattern wikidataIRIMatcher = Pattern.compile("http://www.wikidata.org/entity/Q(\\d+)");
+  private static final Pattern qidPattern = Pattern.compile("Q(\\d+)");
   private final Counter.Readable blocks = Counter.newMultiThreadCounter();
   private final Counter.Readable nodes = Counter.newMultiThreadCounter();
   private final Counter.Readable ways = Counter.newMultiThreadCounter();
@@ -111,11 +114,23 @@ public class Wikidata {
    * @throws UncheckedIOException if an error occurs
    */
   public static void fetch(OsmInputFile infile, Path outfile, PlanetilerConfig config, Profile profile, Stats stats) {
+    fetch(infile, outfile, config, profile, stats, Duration.ofSeconds(0), 0);
+  }
+
+  /**
+   * Loads any existing translations from {@code outfile}, then downloads translations for any wikidata element in
+   * {@code infile} that have not already been downloaded and writes the results to {@code outfile}.
+   *
+   * @throws UncheckedIOException if an error occurs
+   */
+  public static void fetch(OsmInputFile infile, Path outfile, PlanetilerConfig config, Profile profile, Stats stats,
+    Duration maxAge, int updateLimit) {
+
     var timer = stats.startStage("wikidata");
     int processThreads = Math.max(1, config.threads() - 1);
-    LOGGER.info("Starting with " + processThreads + " process threads");
+    LOGGER.info("Starting with {} process threads", processThreads);
 
-    WikidataTranslations oldMappings = load(outfile);
+    WikidataTranslations oldMappings = load(outfile, maxAge, updateLimit);
     try (
       Writer writer = Files.newBufferedWriter(outfile);
       OsmBlockSource osmSource = infile.get()
@@ -151,7 +166,7 @@ public class Wikidata {
         .addPipelineStats(pipeline);
 
       pipeline.awaitAndLog(loggers, config.logInterval());
-      LOGGER.info("DONE fetched:" + fetcher.wikidatas.get());
+      LOGGER.info("DONE fetched: {}", fetcher.wikidatas.get());
     } catch (IOException e) {
       throw new UncheckedIOException(e);
     }
@@ -163,18 +178,28 @@ public class Wikidata {
    * Returns translations parsed from {@code path} that was written by a previous run of the downloader.
    */
   public static WikidataTranslations load(Path path) {
+    var translationsProvider = Wikidata.load(path, Duration.ZERO, 0);
+    translationsProvider.clearUpdateTimes();
+    return translationsProvider;
+  }
+
+  private static WikidataTranslations load(Path path, Duration maxAge, int updateLimit) {
     Timer timer = Timer.start();
     if (!Files.exists(path)) {
       LOGGER.info("no wikidata translations found, run with --fetch-wikidata to download");
       return new WikidataTranslations();
     } else {
       try (BufferedReader fis = Files.newBufferedReader(path)) {
-        WikidataTranslations result = load(fis);
+        WikidataTranslations result = load(fis, maxAge, updateLimit, Clock.systemUTC());
         LOGGER.info(
-          "loaded from " + result.getAll().size() + " mappings from " + path.toAbsolutePath() + " in " + timer.stop());
+          "loaded from {} mappings from {} in {}",
+          result.getAll().size(),
+          path.toAbsolutePath(),
+          timer.stop()
+        );
         return result;
       } catch (IOException e) {
-        LOGGER.info("error loading " + path.toAbsolutePath() + ": " + e);
+        LOGGER.info("error loading {}: {}", path.toAbsolutePath(), e);
         return new WikidataTranslations();
       }
     }
@@ -185,13 +210,36 @@ public class Wikidata {
    * second element is a map from language to translation.
    */
   static WikidataTranslations load(BufferedReader reader) throws IOException {
+    return load(reader, Duration.ZERO, 0, Clock.systemUTC());
+  }
+
+  protected static WikidataTranslations load(BufferedReader reader, Duration maxAge, int updateLimit, Clock clock)
+    throws IOException {
     WikidataTranslations mappings = new WikidataTranslations();
     String line;
+    Instant updateTimeLimit = maxAge.isZero() ? null : Instant.now(clock).minus(maxAge);
+    int updateCounter = 0;
     while ((line = reader.readLine()) != null) {
       JsonNode node = objectMapper.readTree(line);
       long id = Long.parseLong(node.get(0).asText());
+
+      Instant updateTime = Instant.EPOCH;
+      if (node.has(2)) {
+        updateTime = Instant.ofEpochMilli(node.get(2).asLong());
+      }
+      if (updateTimeLimit != null && updateTime.isBefore(updateTimeLimit) &&
+        (updateLimit <= 0 || updateCounter < updateLimit)) {
+        // do not load old entries => new translations will be fetched later
+        updateCounter++;
+        continue;
+      }
+      mappings.putUpdateTime(id, updateTime);
+
       ObjectNode theseMappings = (ObjectNode) node.get(1);
       theseMappings.fields().forEachRemaining(entry -> mappings.put(id, entry.getKey(), entry.getValue().asText()));
+    }
+    if (updateCounter > 0) {
+      LOGGER.info("{} translations dropped as too old, will be re-fetched", updateCounter);
     }
     return mappings;
   }
@@ -203,7 +251,7 @@ public class Wikidata {
       String idText = matcher.group(1);
       return Long.parseLong(idText);
     } else {
-      throw new RuntimeException("Unexpected response IRI: " + iri);
+      throw new IllegalStateException("Unexpected response IRI: " + iri);
     }
   }
 
@@ -233,14 +281,13 @@ public class Wikidata {
           blockRelations++;
         }
         Object wikidata = elem.getString("wikidata");
-        if (wikidata instanceof String wikidataString) {
-          if (profile.caresAboutWikidataTranslation(elem)) {
-            long qid = parseQid(wikidataString);
-            if (qid > 0) {
-              next.accept(qid);
-            }
+        if (wikidata instanceof String wikidataString && profile.caresAboutWikidataTranslation(elem)) {
+          long qid = parseQid(wikidataString);
+          if (qid > 0) {
+            next.accept(qid);
           }
         }
+
       }
       blocks.inc();
       nodes.incBy(blockNodes);
@@ -255,7 +302,7 @@ public class Wikidata {
       LongObjectMap<Map<String, String>> results = queryWikidata(qidsToFetch);
       batches.inc();
       LOGGER.info("Fetched batch {} ({} qids) {}", batches.get(), qidsToFetch.size(), timer.stop());
-      writeTranslations(results);
+      writeTranslations(results, Hppc.newLongObjectHashMap());
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       throwFatalException(e);
@@ -312,12 +359,12 @@ public class Wikidata {
       } catch (IOException e) {
         boolean lastTry = i == config.httpRetries();
         if (!lastTry) {
-          LOGGER.warn("sparql query failed, retrying: " + e);
+          LOGGER.warn("sparql query failed, retrying: {}", e.toString());
         } else {
-          LOGGER.error("sparql query failed, exhausted retries: " + e);
+          LOGGER.error("sparql query failed, exhausted retries: {}", e.toString());
           throw e;
         }
-        Thread.sleep(config.httpRetryWait());
+        sleep(config.httpRetryWait());
       }
     }
 
@@ -328,11 +375,16 @@ public class Wikidata {
     }
   }
 
+  protected void sleep(Duration duration) throws InterruptedException {
+    Thread.sleep(duration.toMillis());
+  }
+
   void loadExisting(WikidataTranslations oldMappings) throws IOException {
     LongObjectMap<Map<String, String>> alreadyHave = oldMappings.getAll();
+    LongObjectMap<Instant> alreadyHaveUpdateTimes = oldMappings.getUpdateTimes();
     if (!alreadyHave.isEmpty()) {
-      LOGGER.info("skipping " + alreadyHave.size() + " mappings we already have");
-      writeTranslations(alreadyHave);
+      LOGGER.info("skipping {} mappings we already have", alreadyHave.size());
+      writeTranslations(alreadyHave, alreadyHaveUpdateTimes);
       for (LongObjectCursor<Map<String, String>> cursor : alreadyHave) {
         visited.add(cursor.key);
       }
@@ -340,11 +392,16 @@ public class Wikidata {
   }
 
   /** Flushes a batch of translations to disk. */
-  private void writeTranslations(LongObjectMap<Map<String, String>> results) throws IOException {
+  private void writeTranslations(LongObjectMap<Map<String, String>> results, LongObjectMap<Instant> updateTimes)
+    throws IOException {
+    final long updateTimeDefault = Instant.now().toEpochMilli();
     for (LongObjectCursor<Map<String, String>> cursor : results) {
+      long updateTime =
+        updateTimes.containsKey(cursor.key) ? updateTimes.get(cursor.key).toEpochMilli() : updateTimeDefault;
       writer.write(objectMapper.writeValueAsString(List.of(
         Long.toString(cursor.key),
-        cursor.value
+        cursor.value,
+        updateTime
       )));
       writer.write(System.lineSeparator());
     }
@@ -355,12 +412,12 @@ public class Wikidata {
   interface Client {
 
     static Client wrap(HttpClient client) {
-      return (req) -> {
+      return req -> {
         var response = client.send(req, BodyHandlers.ofInputStream());
         if (response.statusCode() >= 400) {
           String body;
-          try {
-            body = new String(response.body().readAllBytes(), StandardCharsets.UTF_8);
+          try (var responseBody = response.body()) {
+            body = new String(responseBody.readAllBytes(), StandardCharsets.UTF_8);
           } catch (IOException e) {
             body = "Error reading body: " + e;
           }
@@ -383,17 +440,30 @@ public class Wikidata {
   public static class WikidataTranslations implements Translations.TranslationProvider {
 
     private final LongObjectMap<Map<String, String>> data = Hppc.newLongObjectHashMap();
-
-    public WikidataTranslations() {}
+    private final LongObjectMap<Instant> updateTimes = Hppc.newLongObjectHashMap();
 
     /** Returns a map from language code to translated name for {@code qid}. */
     public Map<String, String> get(long qid) {
       return data.get(qid);
     }
 
+    public void clearUpdateTimes() {
+      updateTimes.clear();
+    }
+
     /** Returns all maps from language code to translated name for {@code qid}. */
     public LongObjectMap<Map<String, String>> getAll() {
       return data;
+    }
+
+    /** Returns all maps from language code to translated name for {@code qid}. */
+    public LongObjectMap<Instant> getUpdateTimes() {
+      return updateTimes;
+    }
+
+    /** Stores a update date+time for {@code qid}. */
+    public void putUpdateTime(long qid, Instant updateTime) {
+      updateTimes.put(qid, updateTime);
     }
 
     /** Stores a name translation for {@code qid} in {@code lang}. */

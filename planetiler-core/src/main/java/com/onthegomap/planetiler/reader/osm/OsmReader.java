@@ -645,6 +645,11 @@ public class OsmReader implements Closeable, MemoryEstimator.HasEstimate {
     }
 
     @Override
+    public long vectorTileFeatureId(int multiplier) {
+      return OsmElement.vectorTileFeatureId(multiplier, id(), originalElement.type());
+    }
+
+    @Override
     public Geometry latLonGeometry() throws GeometryException {
       return latLonGeom != null ? latLonGeom : (latLonGeom = GeoUtils.worldToLatLonCoords(worldGeometry()));
     }

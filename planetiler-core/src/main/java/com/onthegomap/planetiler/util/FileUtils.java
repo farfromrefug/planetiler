@@ -12,6 +12,7 @@ import java.nio.file.ClosedFileSystemException;
 import java.nio.file.FileStore;
 import java.nio.file.FileSystem;
 import java.nio.file.FileSystems;
+import java.nio.file.FileVisitOption;
 import java.nio.file.Files;
 import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
@@ -37,7 +38,7 @@ public class FileUtils {
   private static final Format FORMAT = Format.defaultInstance();
   // Prevent zip-bomb attack, see https://rules.sonarsource.com/java/RSPEC-5042
   private static final int ZIP_THRESHOLD_ENTRIES = 10_000;
-  private static final int ZIP_THRESHOLD_SIZE = 1_000_000_000;
+  private static final long ZIP_THRESHOLD_SIZE = 100_000_000_000L;
   private static final double ZIP_THRESHOLD_RATIO = 1_000;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(FileUtils.class);
@@ -49,7 +50,7 @@ public class FileUtils {
     return StreamSupport.stream(fileSystem.getRootDirectories().spliterator(), false)
       .flatMap(rootDirectory -> {
         try {
-          return Files.walk(rootDirectory);
+          return Files.walk(rootDirectory, FileVisitOption.FOLLOW_LINKS);
         } catch (IOException e) {
           LOGGER.error("Unable to walk " + rootDirectory + " in " + fileSystem, e);
           return Stream.empty();
@@ -82,9 +83,9 @@ public class FileUtils {
             .toList();
         }
       } else if (Files.isDirectory(basePath)) {
-        try (var walk = Files.walk(basePath)) {
+        try (var walk = Files.walk(basePath, FileVisitOption.FOLLOW_LINKS)) {
           return walk
-            .filter(path -> matcher.matches(path.getFileName()))
+            .filter(path -> matcher.matches(path.getFileName()) || matcher.matches(basePath.relativize(path)))
             .flatMap(path -> {
               if (FileUtils.hasExtension(path, "zip")) {
                 return walkZipFile.apply(path).stream();
@@ -109,8 +110,9 @@ public class FileUtils {
    * @param pattern  pattern to match filenames against, as described in {@link FileSystem#getPathMatcher(String)}.
    */
   public static List<Path> walkPathWithPattern(Path basePath, String pattern) {
-    return walkPathWithPattern(basePath, pattern, zipPath -> List.of(zipPath));
+    return walkPathWithPattern(basePath, pattern, List::of);
   }
+
 
   /** Returns true if {@code path} ends with ".extension" (case-insensitive). */
   public static boolean hasExtension(Path path, String extension) {
@@ -269,7 +271,7 @@ public class FileUtils {
    */
   public static void safeCopy(InputStream inputStream, Path destPath) {
     try (var outputStream = Files.newOutputStream(destPath, StandardOpenOption.CREATE, WRITE)) {
-      int totalSize = 0;
+      long totalSize = 0;
 
       int nBytes;
       byte[] buffer = new byte[2048];
@@ -293,7 +295,7 @@ public class FileUtils {
    * @throws UncheckedIOException if an IO exception occurs
    */
   public static void unzip(InputStream input, Path destDir) {
-    int totalSizeArchive = 0;
+    long totalSizeArchive = 0;
     int totalEntryArchive = 0;
     try (var zip = new ZipInputStream(input)) {
       ZipEntry entry;

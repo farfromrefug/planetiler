@@ -29,7 +29,7 @@ public record PlanetilerConfig(
   int maxzoomForRendering,
   boolean force,
   boolean append,
-  boolean gzipTempStorage,
+  boolean compressTempStorage,
   boolean mmapTempStorage,
   int sortMaxReaders,
   int sortMaxWriters,
@@ -60,7 +60,8 @@ public record PlanetilerConfig(
   Path tmpDir,
   Path tileWeights,
   double maxPointBuffer,
-  boolean logJtsExceptions
+  boolean logJtsExceptions,
+  int featureSourceIdMultiplier
 ) {
 
   public static final int MIN_MINZOOM = 0;
@@ -123,7 +124,7 @@ public record PlanetilerConfig(
     int renderMaxzoom =
       arguments.getInteger("render_maxzoom", "maximum rendering zoom level up to " + MAX_MAXZOOM,
         Math.max(maxzoom, DEFAULT_MAXZOOM));
-    Path tmpDir = arguments.file("tmpdir", "temp directory", Path.of("data", "tmp"));
+    Path tmpDir = arguments.file("tmpdir|tmp", "temp directory", Path.of("data", "tmp"));
 
     return new PlanetilerConfig(
       arguments,
@@ -146,7 +147,8 @@ public record PlanetilerConfig(
         "append to the output file - only supported by " + Stream.of(TileArchiveConfig.Format.values())
           .filter(TileArchiveConfig.Format::supportsAppend).map(TileArchiveConfig.Format::id).toList(),
         false),
-      arguments.getBoolean("gzip_temp", "gzip temporary feature storage (uses more CPU, but less disk space)", false),
+      arguments.getBoolean("compress_temp|gzip_temp",
+        "compress temporary feature storage (uses more CPU, but less disk space)", false),
       arguments.getBoolean("mmap_temp", "use memory-mapped IO for temp feature files", true),
       arguments.getInteger("sort_max_readers", "maximum number of concurrent read threads to use when sorting chunks",
         6),
@@ -208,11 +210,15 @@ public record PlanetilerConfig(
       arguments.file("tile_weights", "tsv.gz file with columns z,x,y,loads to generate weighted average tile size stat",
         tmpDir.resolveSibling("tile_weights.tsv.gz")),
       arguments.getDouble("max_point_buffer",
-        "Max tile pixels to include points outside tile bounds. Set to a lower value to reduce tile size for " +
+        "Additional global limit for the max tile pixels to include points outside tile bounds of all layers. Set to a lower value to reduce tile size for " +
           "clients that handle label collisions across tiles (most web and native clients). NOTE: Do not reduce if you need to support " +
           "raster tile rendering",
         Double.POSITIVE_INFINITY),
-      arguments.getBoolean("log_jts_exceptions", "Emit verbose details to debug JTS geometry errors", false)
+      arguments.getBoolean("log_jts_exceptions", "Emit verbose details to debug JTS geometry errors", false),
+      arguments.getInteger("feature_source_id_multiplier",
+        "Set vector tile feature IDs to (featureId * thisValue) + sourceId " +
+          "where sourceId is 1 for OSM nodes, 2 for ways, 3 for relations, and 0 for other sources. Set to false to disable.",
+        10)
     );
   }
 

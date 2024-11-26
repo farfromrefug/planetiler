@@ -19,6 +19,10 @@ import java.net.http.HttpResponse.BodySubscriber;
 import java.net.http.HttpResponse.BodySubscribers;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.ZoneId;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -75,6 +79,17 @@ class WikidataTest {
       }
     }
     """;
+  final String wikidataNamesLegacyJson = """
+    ["1",{"en":"English 1","de":"Deutch 1"}]
+    ["2",{"en":"English 2","de":"Deutch 2"}]
+    ["3",{"en":"English 3","de":"Deutch 3"}]
+    """;
+  final Clock clock = Clock.fixed(Instant.ofEpochMilli(60_000), ZoneId.of("UTC"));
+  final String wikidataNamesJson = """
+    ["1",{"en":"English 1","de":"Deutch 1"},55000]
+    ["2",{"en":"English 2","de":"Deutch 2"},30000]
+    ["3",{"en":"English 3","de":"Deutch 3"},30000]
+    """;
 
   @Test
   void testWikidataTranslations() {
@@ -96,7 +111,7 @@ class WikidataTest {
   List<DynamicTest> testFetchWikidata() throws IOException, InterruptedException {
     StringWriter writer = new StringWriter();
     Wikidata.Client client = Mockito.mock(Wikidata.Client.class, Mockito.RETURNS_SMART_NULLS);
-    Wikidata fixture = new Wikidata(writer, client, 2, profile, config);
+    Wikidata fixture = createFixture(writer, client, 2);
     fixture.fetch(1L);
     Mockito.verifyNoInteractions(client);
     Mockito.when(client.send(Mockito.any()))
@@ -127,7 +142,7 @@ class WikidataTest {
       dynamicTest("do not re-request on subsequent loads", () -> {
         StringWriter writer2 = new StringWriter();
         Wikidata.Client client2 = Mockito.mock(Wikidata.Client.class, Mockito.RETURNS_SMART_NULLS);
-        Wikidata fixture2 = new Wikidata(writer2, client2, 2, profile, config);
+        Wikidata fixture2 = createFixture(writer2, client2, 2);
         fixture2.loadExisting(Wikidata.load(new BufferedReader(new StringReader(writer.toString()))));
         fixture2.fetch(1L);
         fixture2.fetch(2L);
@@ -142,7 +157,7 @@ class WikidataTest {
   void testRetryFailedRequestOnce() throws IOException, InterruptedException {
     StringWriter writer = new StringWriter();
     Wikidata.Client client = Mockito.mock(Wikidata.Client.class, Mockito.RETURNS_SMART_NULLS);
-    Wikidata fixture = new Wikidata(writer, client, 1, profile, config);
+    Wikidata fixture = createFixture(writer, client, 1);
     Mockito.when(client.send(Mockito.any()))
       // fail once then succeed
       .thenThrow(IOException.class)
@@ -159,6 +174,33 @@ class WikidataTest {
     var outerException = assertThrows(RuntimeException.class, () -> fixture.fetch(2L));
     var innerException = outerException.getCause();
     assertInstanceOf(IOException.class, innerException);
+  }
+
+  @Test
+  void testLegacyWikidataNamesJson() throws IOException {
+    var reader = new BufferedReader(new StringReader(wikidataNamesLegacyJson));
+    // no timestamp + age limit set => all old => all should be dropped
+    var translationsProvider = Wikidata.load(reader, Duration.ofSeconds(1), 0, clock);
+    assertEquals(0, translationsProvider.getAll().size());
+  }
+
+  @Test
+  void testWikidataNamesJsonMaxAge() throws IOException {
+    // 10s => item 1 is 5s old hence fresh, the rest is 30s old hence outdated
+    Duration maxAge = Duration.ofSeconds(10);
+
+    var reader = new BufferedReader(new StringReader(wikidataNamesJson));
+    var translationsProvider = Wikidata.load(reader, maxAge, 0, clock);
+    assertEquals(1, translationsProvider.getAll().size());
+  }
+
+  @Test
+  void testWikidataNamesJsonUpdateLimit() throws IOException {
+    Duration maxAge = Duration.ofSeconds(1);
+
+    var reader = new BufferedReader(new StringReader(wikidataNamesJson));
+    var translationsProvider = Wikidata.load(reader, maxAge, 1, clock);
+    assertEquals(2, translationsProvider.getAll().size());
   }
 
   private static void assertEqualsIgnoringWhitespace(String expected, String actual) {
@@ -193,5 +235,14 @@ class WikidataTest {
       }
     }));
     return stringSubscriber.getBody().toCompletableFuture().join();
+  }
+
+  private Wikidata createFixture(StringWriter writer, Wikidata.Client client, int batchSize) {
+    return new Wikidata(writer, client, batchSize, profile, config) {
+      @Override
+      protected void sleep(Duration duration) {
+        // don't sleep in tests
+      }
+    };
   }
 }

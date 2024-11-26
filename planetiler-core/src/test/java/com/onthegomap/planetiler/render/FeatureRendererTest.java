@@ -12,6 +12,7 @@ import com.onthegomap.planetiler.TestUtils;
 import com.onthegomap.planetiler.config.Arguments;
 import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.GeoUtils;
+import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import com.onthegomap.planetiler.stats.Stats;
@@ -23,8 +24,10 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.TreeMap;
 import java.util.concurrent.atomic.AtomicLong;
+import java.util.stream.Collectors;
 import java.util.stream.DoubleStream;
 import org.junit.jupiter.api.DynamicTest;
 import org.junit.jupiter.api.Test;
@@ -811,7 +814,7 @@ class FeatureRendererTest {
         tileRight(1)
       ),
       TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
-        newPolygon(tileFill(5), List.of()) // <<<<---- the filled tile!
+        newPolygon(tileFill(1), List.of()) // <<<<---- the filled tile!
       ),
       TileCoord.ofXYZ(Z14_TILES / 2 + 1, Z14_TILES / 2, 14), List.of(
         tileLeft(1)
@@ -1170,7 +1173,7 @@ class FeatureRendererTest {
     var rendered = renderGeometry(feature);
     var innerTile = rendered.get(TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14));
     assertEquals(1, innerTile.size());
-    assertEquals(new TestUtils.NormGeometry(rectangle(-5, 256 + 5)),
+    assertEquals(new TestUtils.NormGeometry(rectangle(-1, 256 + 1)),
       new TestUtils.NormGeometry(innerTile.iterator().next()));
   }
 
@@ -1423,6 +1426,66 @@ class FeatureRendererTest {
     assertTopologicallyEquivalentFeature(
       GeometryPrecisionReducer.reduce(expectedOutput, new PrecisionModel(4096d / 256d)),
       actual
+    );
+  }
+
+  @Test
+  void testLinearRangeFeature() {
+    var feature = lineFeature(
+      newLineString(
+        0.5 + Z14_WIDTH / 2, 0.5 + Z14_WIDTH / 2,
+        0.5 + Z14_WIDTH / 2 + Z14_PX * 10, 0.5 + Z14_WIDTH / 2 + Z14_PX * 10
+      )
+    ).linearRange(0.5, 1).setAttr("k", "v").entireLine();
+    Map<TileCoord, Collection<RenderedFeature>> rendered = renderFeatures(feature);
+    assertEquals(
+      Set.of(
+        List.of(newLineString(128 + 5, 128 + 5, 128 + 10, 128 + 10), Map.of("k", "v")),
+        List.of(newLineString(128, 128, 128 + 5, 128 + 5), Map.of())
+      ),
+      rendered.get(TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14)).stream()
+        .map(RenderedFeature::vectorTileFeature)
+        .map(d -> {
+          try {
+            return List.of(d.geometry().decode(), d.tags());
+          } catch (GeometryException e) {
+            throw new RuntimeException(e);
+          }
+        })
+        .collect(Collectors.toSet())
+    );
+  }
+
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void testLinearRangeFeaturePartialMinzoom(boolean viaMinzoom) {
+    var feature = lineFeature(
+      newLineString(
+        0.5 + Z13_WIDTH / 2, 0.5 + Z13_WIDTH / 2,
+        0.5 + Z13_WIDTH / 2 + Z13_PX * 10, 0.5 + Z13_WIDTH / 2 + Z13_PX * 10
+      )
+    );
+    if (viaMinzoom) {
+      feature.linearRange(0.5, 1).setMinZoom(14);
+    } else {
+      feature.linearRange(0.5, 1).omit();
+    }
+    Map<TileCoord, Collection<RenderedFeature>> rendered = renderFeatures(feature);
+    assertEquals(
+      Set.of(
+        List.of(newLineString(128, 128, 128 + 5, 128 + 5), Map.of())
+      ),
+      rendered.get(TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13)).stream()
+        .map(RenderedFeature::vectorTileFeature)
+        .map(d -> {
+          try {
+            return List.of(d.geometry().decode(), d.tags());
+          } catch (GeometryException e) {
+            throw new RuntimeException(e);
+          }
+        })
+        .collect(Collectors.toSet())
     );
   }
 }

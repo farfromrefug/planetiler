@@ -6,8 +6,10 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.geo.DouglasPeuckerSimplifier;
 import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
+import com.onthegomap.planetiler.geo.SimplifyMethod;
 import com.onthegomap.planetiler.geo.TileCoord;
 import com.onthegomap.planetiler.geo.TileExtents;
+import com.onthegomap.planetiler.geo.VWSimplifier;
 import com.onthegomap.planetiler.stats.Stats;
 import java.io.Closeable;
 import java.io.IOException;
@@ -28,9 +30,7 @@ import org.locationtech.jts.geom.MultiPolygon;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.Polygonal;
-import org.locationtech.jts.geom.impl.PackedCoordinateSequence;
 import org.locationtech.jts.geom.util.AffineTransformation;
-import org.locationtech.jts.simplify.VWSimplifier;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -40,14 +40,6 @@ import org.slf4j.LoggerFactory;
  */
 public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Closeable {
   private static final Logger LOGGER = LoggerFactory.getLogger(FeatureRenderer.class);
-  private static final VectorTile.VectorGeometry FILL = VectorTile.encodeGeometry(GeoUtils.JTS_FACTORY
-    .createPolygon(GeoUtils.JTS_FACTORY.createLinearRing(new PackedCoordinateSequence.Double(new double[]{
-      -5, -5,
-      261, -5,
-      261, 261,
-      -5, 261,
-      -5, -5
-    }, 2, 0))));
   private final PlanetilerConfig config;
   private final Consumer<RenderedFeature> consumer;
   private final Stats stats;
@@ -175,10 +167,8 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
   private void renderLineOrPolygon(FeatureCollector.Feature feature, Geometry input) {
     boolean area = input instanceof Polygonal;
     double worldLength = (area || input.getNumGeometries() > 1) ? 0 : input.getLength();
-    String numPointsAttr = feature.getNumPointsAttr();
     for (int z = feature.getMaxZoom(); z >= feature.getMinZoom(); z--) {
       double scale = 1 << z;
-      double tolerance = feature.getPixelToleranceAtZoom(z) / 256d;
       double minSize = feature.getMinPixelSizeAtZoom(z) / 256d;
       if (area) {
         // treat minPixelSize as the edge of a square that defines minimum area for features
@@ -188,48 +178,62 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
         continue;
       }
 
-      double buffer = feature.getBufferPixelsAtZoom(z) / 256;
-      TileExtents.ForZoom extents = config.bounds().tileExtents().getForZoom(z);
-
-      // TODO potential optimization: iteratively simplify z+1 to get z instead of starting with original geom each time
-      // simplify only takes 4-5 minutes of wall time when generating the planet though, so not a big deal
-      Geometry scaled = AffineTransformation.scaleInstance(scale, scale).transform(input);
-      TiledGeometry sliced;
-      Geometry geom;
-      if(tolerance != 0) {
-        boolean simplifyUsingVW = feature.getSimplifyUsingVW();
-        // if (simplifyUsingVW) {
-        //   geom = VWSimplifier.simplify(scaled, tolerance);
-        // } else {
-          geom = DouglasPeuckerSimplifier.simplify(scaled, tolerance);
-        // }
-      } else {
-        geom = scaled;
-      }
-      List<List<CoordinateSequence>> groups = GeometryCoordinateSequences.extractGroups(geom, minSize);
-      try {
-        sliced = TiledGeometry.sliceIntoTiles(groups, buffer, area, z, extents);
-      } catch (GeometryException e) {
-        try {
-          geom = GeoUtils.fixPolygon(geom);
-          groups = GeometryCoordinateSequences.extractGroups(geom, minSize);
-          sliced = TiledGeometry.sliceIntoTiles(groups, buffer, area, z, extents);
-        } catch (GeometryException ex) {
-          ex.log(stats, "slice_line_or_polygon", "Error slicing feature at z" + z + ": " + feature);
-          // omit from this zoom level, but maybe the next will be better
-          continue;
+      if (feature.hasLinearRanges()) {
+        for (var range : feature.getLinearRangesAtZoom(z)) {
+          if (worldLength * scale * (range.end() - range.start()) >= minSize) {
+            renderLineOrPolygonGeometry(feature, range.geom(), range.attrs(), z, minSize, area);
+          }
         }
+      } else {
+        renderLineOrPolygonGeometry(feature, input, feature.getAttrsAtZoom(z), z, minSize, area);
       }
-      Map<String, Object> attrs = feature.getAttrsAtZoom(sliced.zoomLevel());
-      if (numPointsAttr != null) {
-        // if profile wants the original number off points that the simplified but untiled geometry started with
-        attrs = new HashMap<>(attrs);
-        attrs.put(numPointsAttr, geom.getNumPoints());
-      }
-      writeTileFeatures(z, feature.getId(), feature, sliced, attrs);
     }
 
     stats.processedElement(area ? "polygon" : "line", feature.getLayer());
+  }
+
+  private void renderLineOrPolygonGeometry(FeatureCollector.Feature feature, Geometry input, Map<String, Object> attrs,
+    int z, double minSize, boolean area) {
+    double scale = 1 << z;
+    double tolerance = feature.getPixelToleranceAtZoom(z) / 256d;
+    SimplifyMethod simplifyMethod = feature.getSimplifyMethodAtZoom(z);
+    double buffer = feature.getBufferPixelsAtZoom(z) / 256;
+    TileExtents.ForZoom extents = config.bounds().tileExtents().getForZoom(z);
+
+    // TODO potential optimization: iteratively simplify z+1 to get z instead of starting with original geom each time
+    // simplify only takes 4-5 minutes of wall time when generating the planet though, so not a big deal
+    Geometry scaled = AffineTransformation.scaleInstance(scale, scale).transform(input);
+    TiledGeometry sliced;
+    // TODO replace with geometry pipeline when available
+    Geometry geom = switch (simplifyMethod) {
+      case RETAIN_IMPORTANT_POINTS -> DouglasPeuckerSimplifier.simplify(scaled, tolerance);
+      // DP tolerance is displacement, and VW tolerance is area, so square what the user entered to convert from
+      // DP to VW tolerance
+      case RETAIN_EFFECTIVE_AREAS -> new VWSimplifier().setTolerance(tolerance * tolerance).transform(scaled);
+      case RETAIN_WEIGHTED_EFFECTIVE_AREAS ->
+        new VWSimplifier().setWeight(0.7).setTolerance(tolerance * tolerance).transform(scaled);
+    };
+    List<List<CoordinateSequence>> groups = GeometryCoordinateSequences.extractGroups(geom, minSize);
+    try {
+      sliced = TiledGeometry.sliceIntoTiles(groups, buffer, area, z, extents);
+    } catch (GeometryException e) {
+      try {
+        geom = GeoUtils.fixPolygon(geom);
+        groups = GeometryCoordinateSequences.extractGroups(geom, minSize);
+        sliced = TiledGeometry.sliceIntoTiles(groups, buffer, area, z, extents);
+      } catch (GeometryException ex) {
+        ex.log(stats, "slice_line_or_polygon", "Error slicing feature at z" + z + ": " + feature);
+        // omit from this zoom level, but maybe the next will be better
+        return;
+      }
+    }
+    String numPointsAttr = feature.getNumPointsAttr();
+    if (numPointsAttr != null) {
+      // if profile wants the original number off points that the simplified but untiled geometry started with
+      attrs = new HashMap<>(attrs);
+      attrs.put(numPointsAttr, geom.getNumPoints());
+    }
+    writeTileFeatures(z, feature.getId(), feature, sliced, attrs);
   }
 
   private void writeTileFeatures(int zoom, long id, FeatureCollector.Feature feature, TiledGeometry sliced,
@@ -280,13 +284,13 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
     // polygons that span multiple tiles contain detail about the outer edges separate from the filled tiles, so emit
     // filled tiles now
     if (feature.isPolygon()) {
-      emitted += emitFilledTiles(id, feature, sliced);
+      emitted += emitFilledTiles(zoom, id, feature, sliced);
     }
 
     stats.emittedFeatures(zoom, feature.getLayer(), emitted);
   }
 
-  private int emitFilledTiles(long id, FeatureCollector.Feature feature, TiledGeometry sliced) {
+  private int emitFilledTiles(int zoom, long id, FeatureCollector.Feature feature, TiledGeometry sliced) {
     Optional<RenderedFeature.Group> groupInfo = Optional.empty();
     /*
      * Optimization: large input polygons that generate many filled interior tiles (i.e. the ocean), the encoder avoids
@@ -296,7 +300,7 @@ public class FeatureRenderer implements Consumer<FeatureCollector.Feature>, Clos
     VectorTile.Feature vectorTileFeature = new VectorTile.Feature(
       feature.getLayer(),
       id,
-      FILL,
+      VectorTile.encodeFill(feature.getBufferPixelsAtZoom(zoom)),
       feature.getAttrsAtZoom(sliced.zoomLevel())
     );
 

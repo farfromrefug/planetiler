@@ -445,7 +445,11 @@ public class Arguments {
    */
   public int getInteger(String key, String description, int defaultValue) {
     String value = getArg(key, Integer.toString(defaultValue));
-    int parsed = Integer.parseInt(value);
+    int parsed = switch (value.toLowerCase(Locale.ROOT)) {
+      case "false" -> 0;
+      case "true" -> defaultValue;
+      default -> Integer.parseInt(value);
+    };
     logArgValue(key, description, parsed);
     return parsed;
   }
@@ -469,7 +473,10 @@ public class Arguments {
    */
   public Duration getDuration(String key, String description, String defaultValue) {
     String value = getArg(key, defaultValue);
-    Duration parsed = Duration.parse("PT" + value);
+    if (!value.startsWith("P") && !value.startsWith("T") && !value.startsWith("-")) {
+      value = "PT" + value;
+    }
+    Duration parsed = Duration.parse(value);
     logArgValue(key, description, parsed.get(ChronoUnit.SECONDS) + " seconds");
     return parsed;
   }
@@ -545,5 +552,10 @@ public class Arguments {
       key -> allowed.contains(normalize(key)) ? provider.apply(key) : null,
       () -> keys.get().stream().filter(key -> allowed.contains(normalize(key))).toList()
     );
+  }
+
+  /** Returns a new arguments instance where the value for {@code key} defaults to {@code value}. */
+  public Arguments withDefault(Object key, Object value) {
+    return orElse(Arguments.of(key.toString().replaceFirst("^-*", ""), value));
   }
 }

@@ -24,7 +24,10 @@ public interface OsmElement extends WithTags {
 
   int cost();
 
+  Type type();
+
   enum Type {
+    OTHER,
     NODE,
     WAY,
     RELATION
@@ -40,6 +43,11 @@ public interface OsmElement extends WithTags {
     @Override
     public int cost() {
       return 1 + tags.size() + (info == null ? 0 : Info.COST);
+    }
+
+    @Override
+    public Type type() {
+      return Type.OTHER;
     }
   }
 
@@ -118,6 +126,11 @@ public interface OsmElement extends WithTags {
     }
 
     @Override
+    public Type type() {
+      return Type.NODE;
+    }
+
+    @Override
     public boolean equals(Object obj) {
       if (obj == this) {
         return true;
@@ -170,6 +183,11 @@ public interface OsmElement extends WithTags {
     public int cost() {
       return 1 + tags.size() + nodes.size() + (info == null ? 0 : Info.COST);
     }
+
+    @Override
+    public Type type() {
+      return Type.WAY;
+    }
   }
 
   /** An ordered list of nodes, ways, and other relations. */
@@ -199,6 +217,11 @@ public interface OsmElement extends WithTags {
       return 1 + tags.size() + members.size() * 3 + (info == null ? 0 : Info.COST);
     }
 
+    @Override
+    public Type type() {
+      return Type.RELATION;
+    }
+
     /**
      * A node, way, or relation contained in a relation with an optional "role" to clarify the purpose of each member.
      */
@@ -211,5 +234,14 @@ public interface OsmElement extends WithTags {
 
   record Info(long changeset, long timestamp, int userId, int version, String user) {
     private static final int COST = 2;
+  }
+
+  static long vectorTileFeatureId(int multiplier, long id, Type type) {
+    return (id * multiplier) + switch (type) {
+      case OTHER -> 0;
+      case NODE -> 1;
+      case WAY -> 2;
+      case RELATION -> 3;
+    };
   }
 }
