@@ -14,6 +14,7 @@ import com.onthegomap.planetiler.reader.GeoPackageReader;
 import com.onthegomap.planetiler.reader.NaturalEarthReader;
 import com.onthegomap.planetiler.reader.ShapefileReader;
 import com.onthegomap.planetiler.reader.SourceFeature;
+import com.onthegomap.planetiler.reader.geojson.GeoJsonReader;
 import com.onthegomap.planetiler.reader.osm.OsmInputFile;
 import com.onthegomap.planetiler.reader.osm.OsmNodeBoundsProvider;
 import com.onthegomap.planetiler.reader.osm.OsmReader;
@@ -437,6 +438,35 @@ public class Planetiler {
   }
 
   /**
+   * Adds a new GeoJSON or newline-delimited GeoJSON source that will be processed when {@link #run()} is called.
+   * <p>
+   * If the file does not exist and {@code download=true} argument is set, then the file will first be downloaded from
+   * {@code defaultUrl}.
+   * <p>
+   * To override the location of the {@code geojson} file, set {@code name_path=newpath.geojson} in the arguments and to
+   * override the download URL set {@code name_url=http://url/of/file.geojson}.
+   *
+   * @param name        string to use in stats and logs to identify this stage
+   * @param defaultPath path to the input file to use if {@code name_path} key is not set through arguments
+   * @param defaultUrl  remote URL that the file to download if {@code download=true} argument is set and {@code
+   *                    name_url} argument is not set
+   * @return this runner instance for chaining
+   * @see GeoJsonReader
+   * @see Downloader
+   */
+  public Planetiler addGeoJsonSource(String name, Path defaultPath, String defaultUrl) {
+    Path path = getPath(name, "geojson", defaultPath, defaultUrl);
+    return addStage(name, "Process features in " + path,
+      ifSourceUsed(name,
+        () -> GeoJsonReader.process(name, List.of(path), featureGroup, config, profile, stats)));
+  }
+
+  /** Same as {@link #addGeoJsonSource(String, Path, String)} except don't download a remote file. */
+  public Planetiler addGeoJsonSource(String name, Path defaultPath) {
+    return addGeoJsonSource(name, defaultPath, null);
+  }
+
+  /**
    * Adds a new Natural Earth sqlite file source that will be processed when {@link #run()} is called.
    * <p>
    * To override the location of the {@code sqlite} file, set {@code name_path=newpath.zip} in the arguments and to
@@ -589,7 +619,9 @@ public class Planetiler {
   public Translations translations() {
     if (translations == null) {
       boolean transliterate = arguments.getBoolean("transliterate", "attempt to transliterate latin names", true);
-      List<String> languages = arguments.getList("languages", "Languages to include labels for. \"default\" expands to the default set of languages configured by the profile. \"-lang\" excludes \"lang\". \"*\" includes every language not listed.", this.defaultLanguages);
+      List<String> languages = arguments.getList("languages",
+        "Languages to include labels for. \"default\" expands to the default set of languages configured by the profile. \"-lang\" excludes \"lang\". \"*\" includes every language not listed.",
+        this.defaultLanguages);
       if (languages.contains("default")) {
         languages = Stream.concat(
           languages.stream().filter(language -> !language.equals("default")),
