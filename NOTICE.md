@@ -31,6 +31,7 @@ The `planetiler-core` module includes the following software:
   - org.commonmark:commonmark (BSD 2-clause license)
   - org.tukaani:xz (BSD 0-Clause License)
   - blue.strategic.parquet:parquet-floor (Apache license)
+  - org.maplibre:mlt (Apache license)
 - Adapted code:
   - `DouglasPeuckerSimplifier` from [JTS](https://github.com/locationtech/jts) (EDL)
   - `OsmMultipolygon` from [imposm3](https://github.com/omniscale/imposm3) (Apache license)
@@ -60,12 +61,12 @@ The `planetiler-core` module includes the following software:
 
 ## Data
 
-|           source           |                                                               license                                                                | used as default | included in repo |
-|----------------------------|--------------------------------------------------------------------------------------------------------------------------------------|-----------------|------------------|
-| OpenStreetMap (OSM) data   | [ODBL](https://www.openstreetmap.org/copyright)                                                                                      | yes             | yes              |
-| Natural Earth              | [public domain](https://www.naturalearthdata.com/about/terms-of-use/)                                                                | yes             | yes              |
-| OSM Lakelines              | [MIT](https://github.com/lukasmartinelli/osm-lakelines), data from OSM [ODBL](https://www.openstreetmap.org/copyright)               | yes             | no               |
-| OSM Water Polygons         | [acknowledgement](https://osmdata.openstreetmap.de/info/license.html), data from OSM [ODBL](https://www.openstreetmap.org/copyright) | yes             | yes              |
-| Wikidata name translations | [CCO](https://www.wikidata.org/wiki/Wikidata:Licensing)                                                                              | no              | no               |
-| Overture Maps              | [Various](https://docs.overturemaps.org/attribution)                                                                                 | no              | yes              |
+|           source           |                                                        license                                                         | used as default | included in repo |
+|----------------------------|------------------------------------------------------------------------------------------------------------------------|-----------------|------------------|
+| OpenStreetMap (OSM) data   | [ODBL](https://www.openstreetmap.org/copyright)                                                                        | yes             | yes              |
+| Natural Earth              | [public domain](https://www.naturalearthdata.com/about/terms-of-use/)                                                  | yes             | yes              |
+| OSM Lakelines              | [MIT](https://github.com/lukasmartinelli/osm-lakelines), data from OSM [ODBL](https://www.openstreetmap.org/copyright) | yes             | no               |
+| OSM Water Polygons         | acknowledgement, data from OSM [ODBL](https://www.openstreetmap.org/copyright)                                         | yes             | yes              |
+| Wikidata name translations | [CCO](https://www.wikidata.org/wiki/Wikidata:Licensing)                                                                | no              | no               |
+| Overture Maps              | [Various](https://docs.overturemaps.org/attribution)                                                                   | no              | yes              |
 

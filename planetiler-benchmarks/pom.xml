@@ -30,7 +30,7 @@
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-assembly-plugin</artifactId>
-        <version>3.7.1</version>
+        <version>3.8.0</version>
         <!-- for with-deps assembly descriptor -->
         <dependencies>
           <dependency>
@@ -53,10 +53,11 @@
       </plugin>
 
       <plugin>
-        <artifactId>maven-deploy-plugin</artifactId>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
         <configuration>
           <!-- we don't want to deploy this module -->
-          <skip>true</skip>
+          <skipPublishing>true</skipPublishing>
         </configuration>
       </plugin>
     </plugins>

@@ -7,6 +7,7 @@ import static com.onthegomap.planetiler.TestUtils.rectangle;
 import static java.util.Collections.emptyList;
 import static org.junit.jupiter.api.Assertions.*;
 
+import com.carrotsearch.hppc.LongArrayList;
 import com.onthegomap.planetiler.FeatureCollector;
 import com.onthegomap.planetiler.FeatureCollector.Feature;
 import com.onthegomap.planetiler.Profile;
@@ -24,6 +25,7 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.reader.SimpleFeature;
 import com.onthegomap.planetiler.reader.SourceFeature;
 import com.onthegomap.planetiler.reader.osm.OsmElement;
+import com.onthegomap.planetiler.reader.osm.OsmSourceFeature;
 import com.onthegomap.planetiler.stats.Stats;
 import java.nio.file.Path;
 import java.util.List;
@@ -35,6 +37,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
+import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.Lineal;
 import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.geom.Puntal;
@@ -224,6 +227,31 @@ class ConfiguredFeatureTest {
       Map.of()
     );
     assertEquals(List.of(feature), profile.postProcessLayerFeatures("testLayer", 0, List.of(feature)));
+  }
+
+  @Test
+  void testMergeLineStringMinLengthSetsBufferPixels() {
+    testLinestring("""
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: line
+        tile_post_process:
+          merge_line_strings:
+            min_length: 10
+            min_length_at_max_zoom: 2
+            tolerance: 5
+            buffer: 6
+      """, Map.of(), f -> {
+      assertEquals(10, f.getBufferPixelsAtZoom(12));
+      assertEquals(6, f.getBufferPixelsAtZoom(14));
+    }, 1);
   }
 
   @Test
@@ -1172,7 +1200,7 @@ class ConfiguredFeatureTest {
   @CsvSource("""
     10,10
     ${10+1},11
-    ${feature.tags.key}|9
+    ${feature.tags.key},9
     """)
   void setMinSize(String input, double output) {
     var config = """
@@ -1227,17 +1255,81 @@ class ConfiguredFeatureTest {
         tile_post_process:
           merge_line_strings:
             min_length: 1
+            min_length_at_max_zoom: 0.125
             tolerance: 5
+            tolerance_at_max_zoom: 0.0625
             buffer: 10
       """;
     this.planetilerConfig = PlanetilerConfig.from(Arguments.of(Map.of()));
     assertEquals(new PostProcess(
       new MergeLineStrings(
-        1,
-        5,
-        10
+        1.0,
+        0.125,
+        5.0,
+        0.0625,
+        10.0
       ),
       null
+    ), loadConfig(config).findFeatureLayer("testLayer").postProcess());
+  }
+
+  @Test
+  void testSchemaPostProcessWithMergeLineStringsDefaults() {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: point
+        tile_post_process:
+          merge_line_strings:
+            buffer: 10
+      """;
+    this.planetilerConfig = PlanetilerConfig.from(Arguments.of(Map.of()));
+    assertEquals(new PostProcess(
+      new MergeLineStrings(
+        null,
+        null,
+        null,
+        null,
+        10.0
+      ),
+      null
+    ), loadConfig(config).findFeatureLayer("testLayer").postProcess());
+  }
+
+  @Test
+  void testSchemaPostProcessMergePolygonsTolerance() {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: point
+        tile_post_process:
+          merge_polygons:
+            tolerance: 1.23
+            tolerance_at_max_zoom: 0.123
+      """;
+    this.planetilerConfig = PlanetilerConfig.from(Arguments.of(Map.of()));
+    assertEquals(new PostProcess(
+      null,
+      new MergePolygons(
+        null,
+        null,
+        1.23,
+        0.123
+      )
     ), loadConfig(config).findFeatureLayer("testLayer").postProcess());
   }
 
@@ -1257,12 +1349,16 @@ class ConfiguredFeatureTest {
         tile_post_process:
           merge_polygons:
             min_area: 3
+            min_area_at_max_zoom: 1
       """;
     this.planetilerConfig = PlanetilerConfig.from(Arguments.of(Map.of()));
     assertEquals(new PostProcess(
       null,
       new MergePolygons(
-        3
+        3.0,
+        1.0,
+        null,
+        null
       )
     ), loadConfig(config).findFeatureLayer("testLayer").postProcess());
   }
@@ -1563,10 +1659,40 @@ class ConfiguredFeatureTest {
 
   @ParameterizedTest
   @CsvSource(value = {
+    "feature.point_along_line(0) == feature.point_along_line(0); true",
+    "feature.point_along_line(0) == feature.point_along_line(0); true",
+    "feature.point_along_line(0) == feature.point_along_line(1); true",
+    "feature.point_along_line(0) == feature.point_along_line(0.5); false",
+  }, delimiter = ';')
+  void testGeometryAttributesLineBoolean(String expression, boolean expected) {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          attributes:
+          - key: attr
+            value: ${%s}
+      """.formatted(expression);
+    var sfMatch =
+      SimpleFeature.createFakeOsmFeature(newLineString(1, 2, 3, 4, 1, 2), Map.of(), "osm", "layer", 1, emptyList(),
+        new OsmElement.Info(2, 3, 4, 5, "user"));
+    testFeature(config, sfMatch,
+      any -> assertEquals(expected, any.getAttrsAtZoom(14).get("attr")), 1);
+  }
+
+  @ParameterizedTest
+  @CsvSource(value = {
     "feature.area('z0 px2'); 1.17743E-10",
     "feature.area('z0 tiles'); 7.7164E-6",
     "feature.area('sm'); 1.2364E10",
     "feature.area('km2'); 12363",
+    "feature.area('m2'); 12363000000",
     "feature.area('ft2'); 1.3308E11",
     "feature.area('a'); 1.23637E8",
     "feature.area('ac'); 3055141",
@@ -1635,5 +1761,257 @@ class ConfiguredFeatureTest {
       "tourism", "viewpoint"
     ), "osm", null, 1, emptyList(), OSM_INFO), feature -> assertEquals("black", feature.getAttrsAtZoom(14).get("attr")),
       1);
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void testSplitWays(boolean split) {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: %s
+          include_when:
+            highway:
+            - motorway
+            - footway
+          exclude_when:
+            footway:
+            - sidewalk
+          attributes:
+            - key: from
+              value: ${feature.osm_from_node_id}
+            - key: to
+              value: ${feature.osm_to_node_id}
+      """.formatted(split ? "split_line" : "line");
+    var profile = loadConfig(config);
+    var way = new OsmElement.Way(1, Map.of(), LongArrayList.from(1, 2));
+    assertFalse(profile.splitOsmWayAtIntersections(way));
+    assertFalse(profile.splitOsmWayAtIntersections(way.withTags(Map.of(
+      "waterway", "river"
+    ))));
+
+
+    assertEquals(split, profile.splitOsmWayAtIntersections(way.withTags(Map.of(
+      "highway", "motorway"
+    ))));
+    assertEquals(split, profile.splitOsmWayAtIntersections(way.withTags(Map.of(
+      "highway", "footway"
+    ))));
+    assertFalse(profile.splitOsmWayAtIntersections(way.withTags(Map.of(
+      "highway", "footway",
+      "footway", "sidewalk"
+    ))));
+  }
+
+
+  @Test
+  void testFromToNodeId() {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: line
+          include_when:
+            highway:
+            - motorway
+          attributes:
+            - key: from
+              value: ${feature.osm_from_node_id}
+            - key: to
+              value: ${feature.osm_to_node_id}
+      """;
+
+    class FakeWay extends SourceFeature implements OsmSourceFeature<OsmElement.Way> {
+
+      private final OsmElement.Way way;
+
+      protected FakeWay(OsmElement.Way way) {
+        super(way.tags(), "osm", null, List.of(), way.id());
+        this.way = way;
+      }
+
+      @Override
+      public Geometry worldGeometry() {
+        return GeoUtils.EMPTY_LINE;
+      }
+
+      @Override
+      public Geometry latLonGeometry() {
+        return GeoUtils.EMPTY_LINE;
+      }
+
+      @Override
+      public boolean isPoint() {
+        return false;
+      }
+
+      @Override
+      public boolean canBePolygon() {
+        return false;
+      }
+
+      @Override
+      public boolean canBeLine() {
+        return true;
+      }
+
+      @Override
+      public OsmElement.Way originalElement() {
+        return way;
+      }
+    }
+
+    var way = new OsmElement.Way(1, Map.of("highway", "motorway"), LongArrayList.from(1, 2));
+    testFeature(config, new FakeWay(way), feature -> {
+      assertEquals(1L, feature.getAttrsAtZoom(14).get("from"));
+      assertEquals(2L, feature.getAttrsAtZoom(14).get("to"));
+    }, 1);
+  }
+
+
+  @ParameterizedTest
+  @CsvSource(value = {
+    "${feature.osm_user_name == 'user'}",
+    "${feature.tags.key == 'value'}",
+    "{ '${feature.osm_user_name}': 'user' }",
+    "{ '${feature.tags.key}': 'value' }",
+  }, delimiter = '\t')
+  void testSplitWithExpression(String filter) {
+    var config = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: split_line
+          include_when: %s
+      """.formatted(filter);
+    var profile = loadConfig(config);
+    assertFalse(profile.splitOsmWayAtIntersections(
+      new OsmElement.Way(1, Map.of(), LongArrayList.from(1, 2),
+        new OsmElement.Info(1L, 2L, 3, 4, "other_user"))));
+    assertTrue(profile.splitOsmWayAtIntersections(new OsmElement.Way(1, Map.of(
+      "key", "value"
+    ), LongArrayList.from(1, 2), new OsmElement.Info(1L, 2L, 3, 4, "user"))));
+  }
+
+  @Test
+  void testBuffer() {
+    testPolygon("""
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        buffer: 5
+        features:
+        - source: osm
+          geometry: polygon
+      """, Map.of(
+      "int", "1",
+      "long", "-1",
+      "double", "1.5"
+    ), feature -> {
+      assertEquals(5, feature.getBufferPixelsAtZoom(14));
+    }, 1);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "100, 100",
+    "${ feature.id }, 1",
+  })
+  void testId(String input, Long output) {
+    String schema = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: polygon
+          id: %s
+      """.formatted(input);
+    testPolygon(schema, Map.of(), feature -> {
+      assertEquals(output, feature.getId());
+    }, 1);
+  }
+
+  @Test
+  void testPointLabelGrid() {
+    String schema = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        buffer: 64
+        features:
+        - source: osm
+          geometry: point
+          point_label_grid:
+            pixel_size:
+              maxzoom: 8
+              value: 32
+            limit:
+              maxzoom: 8
+              value: 64
+      """;
+    testPoint(schema, Map.of(), feature -> {
+      assertEquals(32, feature.getPointLabelGridPixelSizeAtZoom(8));
+      assertEquals(0, feature.getPointLabelGridPixelSizeAtZoom(9));
+      assertEquals(64, feature.getPointLabelGridLimitAtZoom(8));
+      assertEquals(0, feature.getPointLabelGridLimitAtZoom(9));
+    }, 1);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "sort_key: 100, 100",
+    "sort_key: ${ feature.id }, 1",
+    "sort_key_descending: 100, -101",
+    "sort_key_descending: ${ feature.id }, -2",
+  })
+  void testSortKey(String input, Long output) {
+    String schema = """
+      sources:
+        osm:
+          type: osm
+          url: geofabrik:rhode-island
+          local_path: data/rhode-island.osm.pbf
+      layers:
+      - id: testLayer
+        features:
+        - source: osm
+          geometry: polygon
+          %s
+      """.formatted(input);
+    testPolygon(schema, Map.of(), feature -> {
+      assertEquals(output, feature.getSortKey());
+    }, 1);
   }
 }

@@ -25,6 +25,8 @@ The root of the schema has the following attributes:
 - `schema_name` - A descriptive name for the schema
 - `schema_description` - A longer description of the schema
 - `attribution` - An attribution string, which may include HTML such as links
+- `version` - The version number of the tileset
+- `is_overlay` - Is the type of the tileset `overlay` or `baselayer`
 - `sources` - An object where key is the source ID and object is the [Source](#source) definition that points to a file
   containing geographic features to process
 - `tag_mappings` - Specifies that certain tag key should have their values treated as a certain data type.
@@ -58,7 +60,7 @@ A description that tells planetiler how to read geospatial objects with tags fro
 
 - `type` - Enum representing the file format of the data source, one
   of [`osm`](https://wiki.openstreetmap.org/wiki/PBF_Format), [`shapefile`](https://en.wikipedia.org/wiki/Shapefile),
-  or [`geopackage`](https://www.geopackage.org/).
+  [`geopackage`](https://www.geopackage.org/), or [`geojson`](https://geojson.org/).
 - `local_path` - Local path to the file to use, inferred from `url` if missing. Can be a string
   or [expression](#expression) that can reference [argument values](#arguments).
 - `url` - Location to download the file from if not present at `local_path`.
@@ -195,6 +197,7 @@ Built-in arguments can also be accessed from the config file if desired: `${ arg
 A layer contains a thematically-related set of features from one or more input sources.
 
 - `id` - Unique name of this layer
+- `buffer` - The default number of pixels of detail to render outside the visible tile boundary
 - `features` - A list of features contained in this layer. See [Layer Features](#layer-feature)
 - `tile_post_process` - Optional processing operations to merge features with the same attributes in a rendered tile.
   See [Tile Post Process](#tile-post-process)
@@ -227,6 +230,7 @@ A feature is a defined set of objects that meet a specified filter criteria.
   - `polygon_centroid` to match on polygons, and emit a point at the center
   - `line_centroid` to match on lines, and emit a point at the centroid of the line
   - `line_midpoint` to match on lines, and emit a point at midpoint of the line
+  - `split_line` to split OSM ways at nodes where they intersect and re-number the resulting segment features
   - `centroid` to match any geometry, and emit a point at the center
   - `polygon_point_on_surface` to match on polygons, and emit an interior point
   - `point_on_line` to match on lines, and emit a point somewhere along the line
@@ -234,13 +238,33 @@ A feature is a defined set of objects that meet a specified filter criteria.
     interior point
   - `innermost_point` to match on any geometry and for polygons, emit the furthest point from an edge, or for lines emit
     the midpoint.
+- `id` - An [Expression](#expression) that determines ID for the rendered feature.
 - `include_when` - A [Boolean Expression](#boolean-expression) which determines the features to include.
   If unspecified, all features from the specified sources are included.
 - `exclude_when` - A [Boolean Expression](#boolean-expression) which determines if a feature that matched the include
   expression should be skipped. If unspecified, no exclusion filter is applied.
 - `min_zoom` - An [Expression](#expression) that returns the minimum zoom to render this feature at.
 - `min_size` - An [Expression](#expression) that returns the minimum length of line features or square root of the
-  minimum area of polygon features to emit below the maximum zoom-level of the map.
+  minimum area of polygon features to emit below the maximum zoom-level of the map. This value is ignored if the layer
+  [Tile Post Process](#tile-post-process) is defined.
+- `min_size_at_max_zoom` - An [Expression](#expression) that returns the minimum length of line features or square root
+  of the
+  minimum area of polygon features to emit at the maximum zoom-level of the map. This value is ignored if the layer
+  [Tile Post Process](#tile-post-process) is defined.
+- `point_label_grid` - An object that defines label grid pixel size and limit for limiting the density of features in
+  the output tile.
+- `sort_key` - An [Expression](#expression) that determines the value by which features are sorted within a layer in
+  the output vector tile.
+- `sort_key_descending` - An [Expression](#expression) that that determines the value by which features are sorted
+  (descending, e.g. from high to low sort key) within a layer in the output vector tile.
+- `tolerance` - An [Expression](#expression) that returns the value for the tile pixel tolerance to use when
+  simplifying features below the maximum zoom level of the map. This value is ignored for lines or polygons if the layer
+  [Tile Post Process](#tile-post-process) `tolerance` is defined for `merge_line_strings` or `merge_polygons`,
+  respectively.
+- `tolerance_at_max_zoom` - An [Expression](#expression) that returns the value for the tile pixel tolerance to use when
+  simplifying features at the maximum zoom level of the map. This value is ignored for lines or polygons if the layer
+  [Tile Post Process](#tile-post-process) `tolerance_at_max_zoom` is defined for `merge_line_strings` or
+  `merge_polygons`, respectively.
 - `attributes` - An array of [Feature Attribute](#feature-attribute) objects that specify the attributes to be included
   on this output feature.
 
@@ -256,6 +280,19 @@ include_when:
 attributes:
   - { ... }
   - { ... }
+```
+
+```yaml
+source: osm
+geometry: point
+min_zoom: 7
+point_label_grid:
+  pixel_size:
+    maxzoom: 12
+    value: 32
+  limit:
+    maxzoom: 12
+    value: 64
 ```
 
 ## Feature Attribute
@@ -310,23 +347,42 @@ Specific tile post processing operations for merging features may be defined:
 
 The follow attributes for `merge_line_strings` may be set:
 
-- `min_length` - Minimum tile pixel length of features to emit, or 0 to emit all merged linestrings.
-- `tolerance` - After merging, simplify linestrings using this pixel tolerance, or -1 to skip simplification step.
+- `min_length` - Minimum tile pixel length of features to emit, or 0 to emit all merged linestrings,
+  below the maximum zoom-level of the map.
+- `min_length_at_max_zoom` - Minimum tile pixel length of features to emit, or 0 to emit all merged linestrings,
+  at the maximum zoom-level of the map.
+- `tolerance` - After merging, simplify linestrings using this pixel tolerance, or -1 to skip simplification step,
+  below the maximum zoom-level of the map.
+- `tolerance_at_max_zoom` - After merging, simplify linestrings using this pixel tolerance, or -1 to skip simplification
+  step,
+  at the maximum zoom-level of the map.
 - `buffer` - Number of pixels outside the visible tile area to include detail for, or -1 to skip clipping step.
 
 The follow attribute for `merge_polygons` may be set:
 
-- `min_area` - Minimum area in square tile pixels of polygons to emit.
+- `min_area` - Minimum area in square tile pixels of polygons to emit,
+  below the maximum zoom-level of the map.
+- `min_area_at_max_zoom` - Minimum area in square tile pixels of polygons to emit,
+  below the maximum zoom-level of the map.
+- `tolerance` - Before merging, simplify polygons using this pixel tolerance, or 0 to avoid simplification,
+  below the maximum zoom-level of the map.
+- `tolerance_at_max_zoom` - Before merging, simplify polygons using this pixel tolerance, or 0 to avoid simplification,
+  at the maximum zoom-level of the map.
 
 For example:
 
 ```yaml
 merge_line_strings:
-  min_length: 1
+  min_length: 3
+  min_length_at_max_zoom: 0.125
   tolerance: 1
+  tolerance_at_max_zoom: 0.0625
   buffer: 5
 merge_polygons:
   min_area: 1
+  min_area_at_max_zoom: 0.25
+  tolerance: 0.5
+  tolerance_at_max_zoom: 0.125
 ```
 
 ## Data Type
@@ -414,7 +470,8 @@ value:
   water: otherwise
 ```
 
-If the values are not simple strings, then you can use an array of objects with `if` and `value` keys and a last object with an `else` key:
+If the values are not simple strings, then you can use an array of objects with `if` and `value` keys and a last object
+with an `else` key:
 
 ```yaml
 value:
@@ -504,6 +561,8 @@ Additional variables, on top of the root context:
 - `feature.osm_timestamp` - optional OSM last modified timestamp for this feature
 - `feature.osm_user_id` - optional ID of the OSM user that last modified this feature
 - `feature.osm_user_name` - optional name of the OSM user that last modified this feature
+- `feature.osm_from_node_id` - ID of the first node in an OSM way
+- `feature.osm_to_node_id` - ID of the last node in an OSM way
 - `feature.osm_type` - type of the OSM element as a string: `"node"`, `"way"`, or `"relation"`
 
 On the original feature or any accessor that returns a geometry, you can also use:
@@ -513,7 +572,7 @@ On the original feature or any accessor that returns a geometry, you can also us
   z0 ti", "z0 pixels"/"z0 px" for sizes relative to the size of the geometry when projected into a z0 web mercator tile
   containing the entire world.
 - `feature.area("unit")` - area of the feature if it is a polygon, 0 otherwise. Allowed units: any length unit like "
-  km2", "mi2", or "z0 px2" or also "acres"/"ac", "hectares"/"ha", or "ares"/"a".
+  km2", "m2", "mi2", or "z0 px2" or also "acres"/"ac", "hectares"/"ha", or "ares"/"a".
 - `feature.min_lat` / `feature.min_lon` / `feature.max_lat` / `feature.max_lon` - returns coordinates from the bounding
   box of this geometry
 - `feature.lat` / `feature.lon` - returns the coordinate of an arbitrary point on this shape (useful to get the lat/lon
@@ -582,6 +641,7 @@ in [PlanetilerStdLib](src/main/java/com/onthegomap/planetiler/custommap/expressi
   - `<map>.get(key)` similar to `map[key]` except it returns null instead of throwing an error if the map is missing
     that key
   - `<map>.getOrDefault(key, default)` returns the value for key if it is present, otherwise default
+  - `<map>.getOrKeep(key)` returns the value for key if it is present, otherwise the key itself
 - string extensions:
   - `<string>.charAt(number)` returns the character at an index from a string
   - `<string>.indexOf(string)` returns the first index of a substring or -1 if not found

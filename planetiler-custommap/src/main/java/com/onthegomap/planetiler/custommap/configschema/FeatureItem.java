@@ -7,9 +7,16 @@ import java.util.List;
 
 public record FeatureItem(
   @JsonFormat(with = JsonFormat.Feature.ACCEPT_SINGLE_VALUE_AS_ARRAY) List<String> source,
+  @JsonProperty("id") Object id,
   @JsonProperty("min_zoom") Object minZoom,
   @JsonProperty("max_zoom") Object maxZoom,
   @JsonProperty("min_size") Object minSize,
+  @JsonProperty("min_size_at_max_zoom") Object minSizeAtMaxZoom,
+  @JsonProperty("tolerance") Object tolerance,
+  @JsonProperty("tolerance_at_max_zoom") Object toleranceAtMaxZoom,
+  @JsonProperty("point_label_grid") PointLabelGrid pointLabelGrid,
+  @JsonProperty("sort_key") Object sortKey,
+  @JsonProperty("sort_key_descending") Object sortKeyDescending,
   @JsonProperty FeatureGeometry geometry,
   @JsonProperty("include_when") Object includeWhen,
   @JsonProperty("exclude_when") Object excludeWhen,

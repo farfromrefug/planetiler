@@ -27,6 +27,8 @@ import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryType;
 import com.onthegomap.planetiler.geo.MutableCoordinateSequence;
 import com.onthegomap.planetiler.reader.WithTags;
+import com.onthegomap.planetiler.stats.DefaultStats;
+import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.util.Hilbert;
 import com.onthegomap.planetiler.util.LayerAttrStats;
 import java.util.ArrayList;
@@ -36,11 +38,12 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.TreeMap;
 import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.annotation.concurrent.NotThreadSafe;
+import net.jcip.annotations.NotThreadSafe;
 import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateSequence;
@@ -57,6 +60,7 @@ import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.Puntal;
 import org.locationtech.jts.geom.impl.CoordinateArraySequence;
 import org.locationtech.jts.geom.impl.PackedCoordinateSequence;
+import org.maplibre.mlt.converter.mvt.MapboxVectorTile;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import vector_tile.VectorTileProto;
@@ -77,6 +81,14 @@ import vector_tile.VectorTileProto;
  */
 @NotThreadSafe
 public class VectorTile {
+
+  public static final int LEFT = 1;
+  public static final int RIGHT = 1 << 1;
+  public static final int TOP = 1 << 2;
+  public static final int BOTTOM = 1 << 3;
+  public static final int INSIDE = 0;
+  public static final int ALL = TOP | LEFT | RIGHT | BOTTOM;
+
   public static final long NO_FEATURE_ID = 0;
 
   private static final Logger LOGGER = LoggerFactory.getLogger(VectorTile.class);
@@ -197,10 +209,9 @@ public class VectorTile {
     return ((n >> 1) ^ (-(n & 1)));
   }
 
-  private static Geometry decodeCommands(GeometryType geomType, int[] commands, int scale) throws GeometryException {
+  private static Geometry decodeCommands(GeometryType geomType, int[] commands, double SCALE) throws GeometryException {
     try {
       GeometryFactory gf = GeoUtils.JTS_FACTORY;
-      double SCALE = (EXTENT << scale) / SIZE;
       int x = 0;
       int y = 0;
 
@@ -438,7 +449,7 @@ public class VectorTile {
     Coordinate coord = geometry.getCoordinate();
     int x = zigZagEncode((int) Math.round(coord.x * 4096 / 256));
     int y = zigZagEncode((int) Math.round(coord.y * 4096 / 256));
-    return Hilbert.hilbertXYToIndex(15, x, y);
+    return (int) Hilbert.hilbertXYToIndex(15, x, y);
   }
 
   /**
@@ -521,11 +532,24 @@ public class VectorTile {
   }
 
   /**
-   * Returns a vector tile protobuf object with all features in this tile.
+   * Alias for {@link #toProto(boolean)} where {@code includeIds=true}
    */
   public VectorTileProto.Tile toProto() {
+    return toProto(true);
+  }
+
+  /**
+   * Returns a vector tile protobuf object with all features in this tile.
+   *
+   * @param includeIds True to set IDs on each feature, false to exclude
+   */
+  public VectorTileProto.Tile toProto(boolean includeIds) {
     VectorTileProto.Tile.Builder tile = VectorTileProto.Tile.newBuilder();
     for (Map.Entry<String, Layer> e : layers.entrySet()) {
+      if (e.getValue().encodedFeatures.isEmpty()) {
+        continue;
+      }
+
       String layerName = e.getKey();
       Layer layer = e.getValue();
 
@@ -555,7 +579,8 @@ public class VectorTile {
           .setType(feature.geometry().geomType().asProtobufType())
           .addAllGeometry(Ints.asList(feature.geometry().commands()));
 
-        // if (feature.id != NO_FEATURE_ID) {
+        // alpimaps: never emit feature ids (upstream gates this on includeIds / --exclude-ids)
+        // if (includeIds && feature.id != NO_FEATURE_ID) {
         //   featureBuilder.setId(feature.id);
         // }
 
@@ -629,6 +654,45 @@ public class VectorTile {
    */
   public void trackLayerStats(LayerAttrStats.Updater.ForZoom layerStats) {
     this.layerStatsTracker = layerStats;
+  }
+
+  public boolean isEmpty() {
+    return layers.isEmpty();
+  }
+
+  public MapboxVectorTile toMltInput() {
+    return toMltInput(DefaultStats.get());
+  }
+
+  public MapboxVectorTile toMltInput(Stats stats) {
+    return new MapboxVectorTile(
+      layers.entrySet().stream().filter(e -> !e.getValue().encodedFeatures.isEmpty()).map(entry -> {
+        String name = entry.getKey();
+        Layer layer = entry.getValue();
+        var keys = layer.keys();
+        var values = layer.values();
+        List<org.maplibre.mlt.data.Feature> features = layer.encodedFeatures.stream().map(feature -> {
+          Map<String, Object> properties = new LinkedHashMap<>();
+          for (int i = 0; i < feature.tags.size(); i += 2) {
+            properties.put(keys.get(feature.tags.get(i)), values.get(feature.tags.get(i + 1)));
+          }
+          try {
+            return new org.maplibre.mlt.data.Feature(feature.id, feature.geometry.decodeToExtent(), properties);
+          } catch (GeometryException e) {
+            e.log(stats, "mlt_feature", "Error converting to MLT " + properties);
+            return null;
+          }
+        }).filter(Objects::nonNull).toList();
+        return new org.maplibre.mlt.data.Layer(name, features, EXTENT);
+      }).toList());
+  }
+
+  public Integer getNumKeys(String layer) {
+    return layers.get(layer).keys().size();
+  }
+
+  public Integer getNumValues(String layer) {
+    return layers.get(layer).values().size();
   }
 
   enum Command {
@@ -734,12 +798,6 @@ public class VectorTile {
    */
   public record VectorGeometry(int[] commands, GeometryType geomType, int scale) {
 
-    private static final int LEFT = 1;
-    private static final int RIGHT = 1 << 1;
-    private static final int TOP = 1 << 2;
-    private static final int BOTTOM = 1 << 3;
-    private static final int INSIDE = 0;
-    private static final int ALL = TOP | LEFT | RIGHT | BOTTOM;
     private static final VectorGeometry EMPTY_POINT = new VectorGeometry(new int[0], GeometryType.POINT, 0);
 
     public VectorGeometry {
@@ -748,34 +806,40 @@ public class VectorTile {
       }
     }
 
-    private static int getSide(int x, int y, int extent) {
-      int result = INSIDE;
-      if (x < 0) {
-        result |= LEFT;
-      } else if (x > extent) {
-        result |= RIGHT;
-      }
-      if (y < 0) {
-        result |= TOP;
-      } else if (y > extent) {
-        result |= BOTTOM;
-      }
-      return result;
+    /**
+     * Returns {@link #LEFT} or {@link #RIGHT} bitwise OR'd with {@link #TOP} or {@link #BOTTOM} to indicate which side
+     * of the rectangle from {@code (x=min, y=min)} to {@code (x=max, y=max)} the {@code (x,y)} point falls in.
+     */
+    public static int getSide(int x, int y, int min, int max) {
+      return (x < min ? LEFT : x > max ? RIGHT : INSIDE) |
+        (y < min ? TOP : y > max ? BOTTOM : INSIDE);
+    }
+
+    /**
+     * Returns {@link #LEFT} or {@link #RIGHT} bitwise OR'd with {@link #TOP} or {@link #BOTTOM} to indicate which side
+     * of the rectangle from {@code (x=min, y=min)} to {@code (x=max, y=max)} the {@code (x,y)} point falls in.
+     */
+    public static int getSide(double x, double y, double min, double max) {
+      return (x < min ? LEFT : x > max ? RIGHT : INSIDE) |
+        (y < min ? TOP : y > max ? BOTTOM : INSIDE);
     }
 
     private static boolean slanted(int x1, int y1, int x2, int y2) {
       return x1 != x2 && y1 != y2;
     }
 
-    private static boolean segmentCrossesTile(int x1, int y1, int x2, int y2, int extent) {
-      return (y1 >= 0 || y2 >= 0) &&
-        (y1 <= extent || y2 <= extent) &&
-        (x1 >= 0 || x2 >= 0) &&
-        (x1 <= extent || x2 <= extent);
+
+    /**
+     * Returns {@code false} if the segment from a point in {@code side1} to {@code side2} is definitely outside of the
+     * rectangle, or true if it might cross the inside where {@code side1} and {@code side2} are from
+     * {@link #getSide(int, int, int, int)}.
+     */
+    public static boolean segmentCrossesTile(int side1, int side2) {
+      return (side1 & side2) == 0;
     }
 
     private static boolean isSegmentInvalid(boolean allowEdges, int x1, int y1, int x2, int y2, int extent) {
-      boolean crossesTile = segmentCrossesTile(x1, y1, x2, y2, extent);
+      boolean crossesTile = segmentCrossesTile(getSide(x1, y1, 0, extent), getSide(x2, y2, 0, extent));
       if (allowEdges) {
         return crossesTile && slanted(x1, y1, x2, y2);
       } else {
@@ -794,7 +858,12 @@ public class VectorTile {
 
     /** Converts an encoded geometry back to a JTS geometry. */
     public Geometry decode() throws GeometryException {
-      return decodeCommands(geomType, commands, scale);
+      return decodeCommands(geomType, commands, (EXTENT << scale) / SIZE);
+    }
+
+    /** Converts an encoded geometry back to a JTS geometry. */
+    private Geometry decodeToExtent() throws GeometryException {
+      return decodeCommands(geomType, commands, 1 << scale);
     }
 
     /** Returns this encoded geometry, scaled back to 0, so it is safe to emit to archive output. */
@@ -904,14 +973,14 @@ public class VectorTile {
           if (command == Command.MOVE_TO.value) {
             firstX = nextX;
             firstY = nextY;
-            if ((visited = getSide(firstX, firstY, extent)) == INSIDE) {
+            if ((visited = getSide(firstX, firstY, 0, extent)) == INSIDE) {
               return false;
             }
           } else {
             if (isSegmentInvalid(allowEdges, x, y, nextX, nextY, extent)) {
               return false;
             }
-            visited |= getSide(nextX, nextY, extent);
+            visited |= getSide(nextX, nextY, 0, extent);
           }
           y = nextY;
           x = nextX;
@@ -1004,7 +1073,7 @@ public class VectorTile {
       }
       int x = commands[1];
       int y = commands[2];
-      return Hilbert.hilbertXYToIndex(15, x >> scale, y >> scale);
+      return (int) Hilbert.hilbertXYToIndex(15, x >> scale, y >> scale);
     }
 
 
@@ -1072,6 +1141,19 @@ public class VectorTile {
       return newGeometry == geometry ? this : new Feature(
         layer,
         id,
+        newGeometry,
+        tags,
+        group
+      );
+    }
+
+    /**
+     * Returns a copy of this feature with {@code id} and {@code geometry} replaced.
+     */
+    public Feature copyWithIdAndGeometry(long newId, VectorGeometry newGeometry) {
+      return new Feature(
+        layer,
+        newId,
         newGeometry,
         tags,
         group
@@ -1148,7 +1230,7 @@ public class VectorTile {
         case Puntal ignored -> encode(new CoordinateArraySequence(geometry.getCoordinates()), shouldClosePath(geometry),
           geometry instanceof MultiPoint, GeometryType.POINT);
         case null -> LOGGER.warn("Null geometry type");
-        default -> LOGGER.warn("Unrecognized geometry type: " + geometry.getGeometryType());
+        default -> LOGGER.warn("Unrecognized geometry type: {}", geometry.getGeometryType());
       }
     }
 

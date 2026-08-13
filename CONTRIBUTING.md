@@ -11,13 +11,14 @@ Pull requests are welcome! Any pull request should:
 To set up your local development environment:
 
 - Fork the repo [setup submodules](README.md#git-submodules)
-- Install Java 21 or later. You can download Java manually from [Adoptium](https://adoptium.net/installation.html) or
+- Install Java 21 or later. You can download Java manually from [Adoptium](https://adoptium.net/installation) or
   use:
-  - [Windows installer](https://adoptium.net/installation.html#windows-msi)
-  - [macOS installer](https://adoptium.net/installation.html#macos-pkg) (or `brew install --cask temurin`,
+  - [Windows installer](https://adoptium.net/installation/windows)
+  - [macOS installer](https://adoptium.net/installation/macOS) (or `brew install --cask temurin`,
     or `port install openjdk21-temurin`)
-  - [Linux installer](https://adoptium.net/installation/linux/) (or `apt-get install openjdk-21-jdk`)
-  - If you update from an older version of java on Ubuntu, run `sudo update-alternatives --config java` after installing the new jdk.
+  - [Linux installer](https://adoptium.net/installation/linux) (or `apt-get install openjdk-21-jdk`)
+  - If you update from an older version of java on Ubuntu, run `sudo update-alternatives --config java` after installing
+    the new jdk.
 - Build and run the tests ([mvnw](https://github.com/takari/maven-wrapper) automatically downloads maven the first time
   you run it):
   - on mac/linux: `./mvnw clean test`
@@ -93,4 +94,13 @@ requests to catch common bugs and security vulnerabilities. To preview Sonar war
 - Then to synchronize your local configuration with the one used in SonarCloud,
   enable connected mode for your IDE using "SonarCloud"
   connection type and the shared read-only API token used in GitHub CI: `c2cfe8bd7368ced07e84a620b7c2487846e220eb`
+
+## AI-Assisted Contributions
+
+Generally it's fine to use AI tools to help create pull requests as long as you adhere to the following guidelines:
+
+- State in your PR description what AI tool(s) you used to create the PR.
+- Make sure a human has reviewed and fully understands all the code changes being submitted.
+- Make sure the PR does not contain any unrelated changes.
+- Make sure that the PR adheres to the project's coding standards and licensing guidelines.
 

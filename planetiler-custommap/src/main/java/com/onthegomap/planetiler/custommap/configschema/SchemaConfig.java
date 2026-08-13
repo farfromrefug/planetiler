@@ -13,6 +13,8 @@ public record SchemaConfig(
   @JsonProperty("schema_name") String schemaName,
   @JsonProperty("schema_description") String schemaDescription,
   String attribution,
+  @JsonProperty("version") String version,
+  @JsonProperty("is_overlay") Boolean isOverlay,
   Map<String, DataSource> sources,
   Object definitions,
   @JsonProperty("tag_mappings") Map<String, Object> inputMappings,
@@ -33,6 +35,11 @@ public record SchemaConfig(
   @Override
   public Map<String, Object> args() {
     return args == null ? Map.of() : args;
+  }
+
+  @Override
+  public Boolean isOverlay() {
+    return isOverlay == null ? false : isOverlay;
   }
 
   public static SchemaConfig load(Path path) {

@@ -23,15 +23,18 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,6 +73,7 @@ public class Downloader {
   private final long chunkSizeBytes;
   private final ResourceUsage diskSpaceCheck = new ResourceUsage("download");
   private final RateLimiter rateLimiter;
+  private final Map<String, Semaphore> perFileLimiters = new ConcurrentHashMap<>();
 
   Downloader(PlanetilerConfig config, long chunkSizeBytes) {
     this.rateLimiter = config.downloadMaxBandwidth() == 0 ? null : RateLimiter.create(config.downloadMaxBandwidth());
@@ -164,16 +168,22 @@ public class Downloader {
 
     ProgressLoggers loggers = ProgressLoggers.create();
 
-    for (var toDownload : toDownloadList) {
-      try {
-        long size = toDownload.metadata.get(10, TimeUnit.SECONDS).size.orElse(0);
-        loggers.addStorageRatePercentCounter(toDownload.id, size, toDownload::bytesDownloaded, true);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        throw new IllegalStateException("Error getting size of " + toDownload.url, e);
-      } catch (ExecutionException | TimeoutException e) {
-        throw new IllegalStateException("Error getting size of " + toDownload.url, e);
+    var groupedById = toDownloadList.stream().collect(Collectors.groupingBy(ResourceToDownload::id));
+
+    for (var group : groupedById.entrySet()) {
+      long size = 0;
+      for (var item : group.getValue()) {
+        try {
+          size += item.metadata.get(10, TimeUnit.SECONDS).size.orElse(0);
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+          throw new IllegalStateException("Error getting size of " + item.url, e);
+        } catch (ExecutionException | TimeoutException e) {
+          throw new IllegalStateException("Error getting size of " + item.url, e);
+        }
       }
+      loggers.addStorageRatePercentCounter(group.getKey(), size,
+        () -> group.getValue().stream().mapToLong(ResourceToDownload::bytesDownloaded).sum(), true);
     }
     loggers.add(" ").addProcessStats()
       .awaitAndLog(downloads, config.logInterval());
@@ -265,41 +275,68 @@ public class Downloader {
       chunks.add(new Range(start, end));
     }
     FileUtils.setLength(tmpPath, metadata.size.orElse(1));
-    Semaphore perFileLimiter = new Semaphore(config.downloadThreads());
+    Semaphore perFileLimiter =
+      perFileLimiters.computeIfAbsent(resource.id(), id -> new Semaphore(config.downloadThreads()));
     Worker.joinFutures(chunks.stream().map(range -> CompletableFuture.runAsync(RunnableThatThrows.wrap(() -> {
       LogUtil.setStage("download", resource.id);
       perFileLimiter.acquire();
-      var counter = resource.progress.counterForThread();
-      try (
-        var fc = FileChannel.open(tmpPath, WRITE);
-        var inputStream = (ranges || range.start > 0) ?
-          openStreamRange(canonicalUrl, range.start, range.end) :
-          openStream(canonicalUrl);
-      ) {
-        long offset = range.start;
-        byte[] buffer = new byte[16384];
-        int read;
-        while (offset < range.end && (read = inputStream.read(buffer, 0, 16384)) >= 0) {
-          counter.incBy(read);
-          if (rateLimiter != null) {
-            rateLimiter.acquire(read);
-          }
-          int position = 0;
-          int remaining = read;
-          while (remaining > 0) {
-            int written = fc.write(ByteBuffer.wrap(buffer, position, remaining), offset);
-            if (written <= 0) {
-              throw new IOException("Failed to write to " + tmpPath);
+      try {
+        var counter = resource.progress.counterForThread();
+        for (int retry = 0; retry <= config.httpRetries(); retry++) {
+          boolean lastTry = retry == config.httpRetries();
+          int retriesRemaining = config.httpRetries() - retry;
+          int countToRewind = 0;
+          try (
+            var fc = FileChannel.open(tmpPath, WRITE);
+            var inputStream = (ranges || range.start > 0) ?
+              openStreamRange(canonicalUrl, range.start, range.end) :
+              openStream(canonicalUrl);
+          ) {
+            long offset = range.start;
+            byte[] buffer = new byte[16384];
+            int read;
+            while (offset < range.end && (read = inputStream.read(buffer, 0, 16384)) >= 0) {
+              counter.incBy(read);
+              countToRewind += read;
+              if (rateLimiter != null) {
+                rateLimiter.acquire(read);
+              }
+              int position = 0;
+              int remaining = read;
+              while (remaining > 0) {
+                int written = fc.write(ByteBuffer.wrap(buffer, position, remaining), offset);
+                if (written <= 0) {
+                  throw new IOException("Failed to write to " + tmpPath);
+                }
+                position += written;
+                remaining -= written;
+                offset += written;
+              }
             }
-            position += written;
-            remaining -= written;
-            offset += written;
+            if (offset < range.end && range.end != Long.MAX_VALUE) {
+              throw new IOException("Unexpected EOF at " + offset + "/" + range.end);
+            }
+            // successfully downloaded file
+            break;
+          } catch (IOException e) {
+            if (lastTry) {
+              throw e;
+            } else {
+              counter.incBy(-countToRewind);
+              LOGGER.warn("Error downloading {}, retries remaining: {} {}", canonicalUrl, retriesRemaining,
+                e.getMessage());
+              retrySleep();
+            }
           }
         }
       } finally {
         perFileLimiter.release();
       }
     }), executor)).toArray(CompletableFuture[]::new)).get();
+  }
+
+  protected void retrySleep() throws InterruptedException {
+    Thread.sleep(config.httpRetryWait());
   }
 
   private HttpRequest.Builder newHttpRequest(String url) {
