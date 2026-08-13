@@ -456,20 +456,22 @@ must [visibly credit OpenMapTiles](https://github.com/openmaptiles/openmaptiles/
 as well.
 
 ## Example generate commands:
+
 * World zoom 7
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=planet --languages=fr,en --force --transportation-name-limit-merge --compact-db --only_layers=place,park,boundary,mountain_peak,transportation,transportation_name,water,waterway,water_name,landcover,landcover_name,landuse,poi --maxzoom=7 --nodemap-type=array --mbtiles=data/world.mbtiles`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=planet --languages=fr,en --force --transportation-name-limit-merge --compact-db --only_layers=place,park,boundary,mountain_peak,transportation,transportation_name,water,waterway,water_name,landcover,landcover_name,landuse,poi --maxzoom=7 --nodemap-type=array --mbtiles=data/world.mbtiles`
 
 * World Routes
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=planet --languages=fr,en --force --transportation-name-limit-merge --compact-db --only_layers=route --maxzoom=10 --nodemap-type=array --mbtiles=data/world_routes.mbtiles`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=planet --languages=fr,en --force --transportation-name-limit-merge --compact-db --only_layers=route --maxzoom=10 --nodemap-type=array --mbtiles=data/world_routes.mbtiles`
 
 * France
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=france --languages="" --force --compact-db --transportation-name-limit-merge --exclude_layers=route --mbtiles=data/france.mbtiles`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=france --languages="" --force --compact-db --transportation-name-limit-merge --exclude_layers=route --mbtiles=data/france.mbtiles`
 
 * France routes
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=france --languages="" --force --compact-db --transportation-name-limit-merge --only_layers=route --mbtiles=data/france_routes.mbtiles`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=france --languages="" --force --compact-db --transportation-name-limit-merge --only_layers=route --mbtiles=data/france_routes.mbtiles`
 
 * France full
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=europe --languages="" --force --compact-db --transportation-name-limit-merge --exclude_layers=route --nodemap-type=array --mbtiles=data/france_full.mbtiles --polygon=/home/mguillon/dev/planetiler/data/sources/france.poly`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=europe --languages="" --force --compact-db --transportation-name-limit-merge --exclude_layers=route --nodemap-type=array --mbtiles=data/france_full.mbtiles --polygon=/home/mguillon/dev/planetiler/data/sources/france.poly`
 
 * France full
-`java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=europe --languages="" --force --compact-db --transportation-name-limit-merge -only_layers=route --nodemap-type=array --mbtiles=data/france_routes.mbtiles --polygon=/home/mguillon/dev/planetiler/data/sources/france.poly`
+  `java -Xmx32g -jar ./planetiler-dist/target/planetiler-dist-0.5-SNAPSHOT-with-deps.jar  --download --area=europe --languages="" --force --compact-db --transportation-name-limit-merge -only_layers=route --nodemap-type=array --mbtiles=data/france_routes.mbtiles --polygon=/home/mguillon/dev/planetiler/data/sources/france.poly`
+
