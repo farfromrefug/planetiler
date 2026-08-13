@@ -1,0 +1,2 @@
+# Temporarily disable tests by adding lines like:
+# org.openmaptiles.layers.BoundaryTest#testMergesDisconnectedLineFeatures

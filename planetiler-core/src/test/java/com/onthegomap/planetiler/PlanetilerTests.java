@@ -10,6 +10,7 @@ import com.onthegomap.planetiler.archive.TileArchiveConfig;
 import com.onthegomap.planetiler.archive.TileArchiveMetadata;
 import com.onthegomap.planetiler.archive.TileArchiveWriter;
 import com.onthegomap.planetiler.archive.TileCompression;
+import com.onthegomap.planetiler.archive.TileFormat;
 import com.onthegomap.planetiler.collection.FeatureGroup;
 import com.onthegomap.planetiler.collection.LongLongMap;
 import com.onthegomap.planetiler.collection.LongLongMultimap;
@@ -34,6 +35,8 @@ import com.onthegomap.planetiler.reader.osm.OsmRelationInfo;
 import com.onthegomap.planetiler.stats.Stats;
 import com.onthegomap.planetiler.stream.InMemoryStreamArchive;
 import com.onthegomap.planetiler.util.BuildInfo;
+import com.onthegomap.planetiler.util.FileUtils;
+import com.onthegomap.planetiler.util.FunctionThatThrows;
 import com.onthegomap.planetiler.util.Gzip;
 import com.onthegomap.planetiler.util.TileSizeStats;
 import java.io.IOException;
@@ -59,9 +62,11 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.geom.MultiPolygon;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
@@ -82,6 +87,8 @@ class PlanetilerTests {
   private static final String TEST_PROFILE_DESCRIPTION = "test description";
   private static final String TEST_PROFILE_ATTRIBUTION = "test attribution";
   private static final String TEST_PROFILE_VERSION = "test version";
+  private static final int Z16_TILES = 1 << 16;
+  private static final double Z16_WIDTH = 1d / Z16_TILES;
   private static final int Z15_TILES = 1 << 15;
   private static final double Z15_WIDTH = 1d / Z15_TILES;
   private static final int Z14_TILES = 1 << 14;
@@ -233,7 +240,7 @@ class PlanetilerTests {
     );
   }
 
-  private SimpleFeature newReaderFeature(Geometry geometry, Map<String, Object> attrs) {
+  private static SimpleFeature newReaderFeature(Geometry geometry, Map<String, Object> attrs) {
     return SimpleFeature.create(geometry, attrs);
   }
 
@@ -292,41 +299,52 @@ class PlanetilerTests {
   }
 
   @ParameterizedTest
-  @ValueSource(booleans = {false, true})
-  void testSinglePoint(boolean anyGeom) throws Exception {
-    double x = 0.5 + Z14_WIDTH / 4;
-    double y = 0.5 + Z14_WIDTH / 4;
+  @CsvSource({
+    "false, mvt",
+    "true, mvt",
+    "false, mlt",
+    "true, mlt",
+  })
+  void testSinglePoint(boolean anyGeom, String tileType) throws Exception {
+    double x = 0.5 + Z15_WIDTH / 4;
+    double y = 0.5 + Z15_WIDTH / 4;
     double lat = GeoUtils.getWorldLat(y);
     double lng = GeoUtils.getWorldLon(x);
 
     var results = runWithReaderFeatures(
-      Map.of("threads", "1", "maxzoom", "15"),
+      Map.of("threads", "1", "maxzoom", "16", "tile-format", tileType),
       List.of(
         newReaderFeature(newPoint(lng, lat), Map.of(
           "attr", "value"
         ))
       ),
       (in, features) -> (anyGeom ? features.anyGeometry("layer") : features.point("layer"))
-        .setZoomRange(13, 15)
+        .setZoomRange(13, 16)
         .setAttr("name", "name value")
         .inheritAttrFromSource("attr")
     );
 
     assertSubmap(Map.of(
-      TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15), List.of(
+      TileCoord.ofXYZ(Z16_TILES / 2, Z16_TILES / 2, 16), List.of(
         feature(newPoint(128, 128), Map.of(
           "attr", "value",
           "name", "name value"
         ))
       ),
-      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+      TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15), List.of(
         feature(newPoint(64, 64), Map.of(
           "attr", "value",
           "name", "name value"
         ))
       ),
-      TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), List.of(
+      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
         feature(newPoint(32, 32), Map.of(
+          "attr", "value",
+          "name", "name value"
+        ))
+      ),
+      TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), List.of(
+        feature(newPoint(16, 16), Map.of(
           "attr", "value",
           "name", "name value"
         ))
@@ -335,7 +353,59 @@ class PlanetilerTests {
     assertSameJson(
       """
         [
-          {"id": "layer", "fields": {"name": "String", "attr": "String"}, "minzoom": 13, "maxzoom": 15}
+          {"id": "layer", "fields": {"name": "String", "attr": "String"}, "minzoom": 13, "maxzoom": 16}
+        ]
+        """,
+      results.metadata.get("vector_layers")
+    );
+  }
+
+  @Test
+  void testAttributeTypeCoercion() throws Exception {
+    double x = 0.5 + Z14_WIDTH / 4;
+    double y = 0.5 + Z14_WIDTH / 4;
+    double lat = GeoUtils.getWorldLat(y);
+    double lng = GeoUtils.getWorldLon(x);
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1", "maxzoom", "15", "tile-format", "mlt"),
+      List.of(
+        newReaderFeature(newPoint(lng, lat), Map.of(
+          "attr", "string"
+        )),
+        newReaderFeature(newPoint(lng, lat), Map.of(
+          "attr", 1
+        )),
+        newReaderFeature(newPoint(lng, lat), Map.of(
+          "attr", 1.5
+        )),
+        newReaderFeature(newPoint(lng, lat), Map.of(
+          "attr", true
+        ))
+      ),
+      (in, features) -> features.point("layer")
+        .setZoomRange(15, 15)
+        .inheritAttrFromSource("attr")
+    );
+
+    assertListsContainSameElements(List.of(
+      feature("layer", newPoint(128, 128), Map.of(
+        "attr", "string"
+      )),
+      feature("layer", newPoint(128, 128), Map.of(
+        "attr", "1"
+      )),
+      feature("layer", newPoint(128, 128), Map.of(
+        "attr", "1.5"
+      )),
+      feature("layer", newPoint(128, 128), Map.of(
+        "attr", "true"
+      ))
+    ), results.tiles.get(TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15)));
+    assertSameJson(
+      """
+        [
+          {"id": "layer", "fields": {"attr": "String"}, "minzoom": 15, "maxzoom": 15}
         ]
         """,
       results.metadata.get("vector_layers")
@@ -384,6 +454,75 @@ class PlanetilerTests {
           newPoint(64, 64),
           newPoint(65, 65)
         ), Map.of(
+          "attr", "value",
+          "name", "name value"
+        ))
+      )
+    ), results.tiles);
+  }
+
+  static Stream<org.junit.jupiter.params.provider.Arguments> pointCollections() {
+    double x1 = 0.5 + Z14_WIDTH / 2;
+    double y1 = 0.5 + Z14_WIDTH / 2;
+    double x2 = x1 + Z13_WIDTH / 256d;
+    double y2 = y1 + Z13_WIDTH / 256d;
+    double lat1 = GeoUtils.getWorldLat(y1);
+    double lng1 = GeoUtils.getWorldLon(x1);
+    double lat2 = GeoUtils.getWorldLat(y2);
+    double lng2 = GeoUtils.getWorldLon(x2);
+
+    return Stream.of(
+      // one collection with several points
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          newPoint(lng1, lat1),
+          newPoint(lng2, lat2)
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      )),
+      // nested collections, i.e. several collection, each with one point, in one collection
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(newPoint(lng1, lat1)).toArray(Geometry[]::new)),
+          GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(newPoint(lng2, lat2)).toArray(Geometry[]::new))
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      ))
+    );
+  }
+
+  // note: Same as testMultiPoint() but we get list of points in the result, not one multipoint
+  @ParameterizedTest
+  @MethodSource("pointCollections")
+  void testPointCollection(List<SimpleFeature> points) throws Exception {
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      points,
+      (in, features) -> features.point("layer")
+        .setZoomRange(13, 14)
+        .setAttr("name", "name value")
+        .inheritAttrFromSource("attr")
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+        feature(newPoint(128, 128), Map.of(
+          "attr", "value",
+          "name", "name value"
+        )),
+        feature(newPoint(130, 130), Map.of(
+          "attr", "value",
+          "name", "name value"
+        ))
+      ),
+      TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), List.of(
+        feature(newPoint(64, 64), Map.of(
+          "attr", "value",
+          "name", "name value"
+        )),
+        feature(newPoint(65, 65), Map.of(
           "attr", "value",
           "name", "name value"
         ))
@@ -658,8 +797,7 @@ class PlanetilerTests {
     ), results.tiles);
   }
 
-  @Test
-  void testMultiLineString() throws Exception {
+  static Stream<org.junit.jupiter.params.provider.Arguments> lineCollections() {
     double x1 = 0.5 + Z14_WIDTH / 2;
     double y1 = 0.5 + Z14_WIDTH / 2;
     double x2 = x1 + Z14_WIDTH;
@@ -669,16 +807,45 @@ class PlanetilerTests {
     double lat2 = GeoUtils.getWorldLat(y2);
     double lng2 = GeoUtils.getWorldLon(x2);
 
-    var results = runWithReaderFeatures(
-      Map.of("threads", "1"),
-      List.of(
+    return Stream.of(
+      // simple multiline
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
         newReaderFeature(newMultiLineString(
           newLineString(lng1, lat1, lng2, lat2),
           newLineString(lng2, lat2, lng1, lat1)
         ), Map.of(
           "attr", "value"
         ))
-      ),
+      )),
+      // one collection with several lines
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          newLineString(lng1, lat1, lng2, lat2),
+          newLineString(lng2, lat2, lng1, lat1)
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      )),
+      // nested collections, i.e. several collection, each with one line, in one collection
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          GeoUtils.JTS_FACTORY
+            .createGeometryCollection(Set.of(newLineString(lng1, lat1, lng2, lat2)).toArray(Geometry[]::new)),
+          GeoUtils.JTS_FACTORY
+            .createGeometryCollection(Set.of(newLineString(lng2, lat2, lng1, lat1)).toArray(Geometry[]::new))
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      ))
+    );
+  }
+
+  @ParameterizedTest
+  @MethodSource("lineCollections")
+  void testMultiLineString(List<SimpleFeature> lines) throws Exception {
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      lines,
       (in, features) -> features.line("layer")
         .setZoomRange(13, 14)
         .setBufferPixels(4)
@@ -870,6 +1037,110 @@ class PlanetilerTests {
     assertEquals(List.of(
       feature(newPolygon(tileFill(4)), Map.of())
     ), results.tiles.get(TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15)));
+  }
+
+  @Test
+  void testZ16Fill() throws Exception {
+    List<Coordinate> outerPoints = z14CoordinateList(
+      -2, -2,
+      2, -2,
+      2, 2,
+      -2, 2,
+      -2, -2
+    );
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1", "maxzoom", "16"),
+      List.of(
+        newReaderFeature(newPolygon(
+          outerPoints
+        ), Map.of())
+      ),
+      (in, features) -> features.polygon("layer")
+        .setZoomRange(16, 16)
+        .setBufferPixels(4)
+    );
+
+    assertEquals(List.of(
+      feature(newPolygon(tileFill(4)), Map.of())
+    ), results.tiles.get(TileCoord.ofXYZ(Z16_TILES / 2, Z16_TILES / 2, 16)));
+  }
+
+  @Test
+  void testZ16HighTileIdSortOrder() throws Exception {
+    // Verify that z16 tiles with high IDs (where FeatureGroup.encodeKey sets bit 63) sort correctly.
+    // A point at z16 tile x=50000 produces an encoded tile ID > 2^32, so tile << 31 sets bit 63.
+    double x16 = (50_000 + 0.5) * Z16_WIDTH;
+    double y16 = (500 + 0.5) * Z16_WIDTH;
+    double lat16 = GeoUtils.getWorldLat(y16);
+    double lng16 = GeoUtils.getWorldLon(x16);
+    // A point near the center for z0
+    double lat0 = GeoUtils.getWorldLat(0.5);
+    double lng0 = GeoUtils.getWorldLon(0.5);
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1", "maxzoom", "16"),
+      List.of(
+        newReaderFeature(newPoint(lng16, lat16), Map.of("name", "z16point")),
+        newReaderFeature(newPoint(lng0, lat0), Map.of("name", "z0point"))
+      ),
+      (in, features) -> features.point("layer")
+        .setZoomRange(0, 16)
+        .inheritAttrFromSource("name")
+    );
+
+    var z0Tile = TileCoord.ofXYZ(0, 0, 0);
+    var z16Tile = TileCoord.ofXYZ(50_000, 500, 16);
+    assertTrue(results.tiles.containsKey(z0Tile), "z0 tile should be in output");
+    assertTrue(results.tiles.containsKey(z16Tile), "z16 tile should be in output");
+
+    // results.tiles is a TreeMap ordered by TileCoord.encoded(), verify z16 comes after z0
+    var tileCoords = new ArrayList<>(results.tiles.keySet());
+    assertTrue(tileCoords.indexOf(z0Tile) < tileCoords.indexOf(z16Tile),
+      "z0 tile must appear before z16 high tile in output order");
+  }
+
+  @Test
+  void testEmptyTileAfterPostProcessingOmittedFromArchive() throws Exception {
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1", "maxzoom", "6"),
+      List.of(
+        newReaderFeature(WORLD_POLYGON, Map.of()),
+        newReaderFeature(newPoint(0.5, 0.5), Map.of())
+      ),
+      (in, features) -> features.anyGeometry("layer"),
+      (layer, zoom, features) -> List.of()
+    );
+
+    assertEquals(Map.of(), results.tiles());
+    assertEquals(0, results.tileDataCount());
+  }
+
+  @Test
+  void testSingleEmptyTileOmittedFromArchive() throws Exception {
+    List<SimpleFeature> features = List.of(
+      newReaderFeature(WORLD_POLYGON, Map.of()),
+      newReaderFeature(newPoint(0.5, 0.5), Map.of())
+    );
+    FunctionThatThrows<TileCoord, PlanetilerResults> run = tileToRemove -> run(
+      Map.of("threads", "1", "maxzoom", "6"),
+      (featureGroup, profile, config) -> processReaderFeatures(featureGroup, profile, config, features),
+      new TestProfile(
+        (in, f) -> f.anyGeometry("layer"),
+        a -> null,
+        (tileCoord, layers) -> tileCoord.equals(tileToRemove) ? Map.of() : layers
+      )
+    );
+
+    TileCoord toOmit = TileCoord.ofXYZ(54, 63, 6);
+    var result1 = run.apply(null);
+    var result2 = run.apply(toOmit);
+
+    assertEquals(result1.tiles.size() - 1, result2.tiles.size());
+
+    var expectedTiles = new TreeMap<>(result1.tiles);
+    expectedTiles.remove(toOmit);
+    assertEquals(expectedTiles, result2.tiles);
   }
 
   @Test
@@ -1140,6 +1411,129 @@ class PlanetilerTests {
     )), sortListValues(results.tiles));
   }
 
+  @Test
+  void testSplitAmbiguousOsmPolygon() throws Exception {
+    var results = runWithOsmElements(
+      Map.of("threads", "1"),
+      List.of(
+        new OsmElement.Node(1, GeoUtils.getWorldLat(120 / 256d), GeoUtils.getWorldLon(120 / 256d)),
+        new OsmElement.Node(2, GeoUtils.getWorldLat(120 / 256d), GeoUtils.getWorldLon(140 / 256d)),
+        new OsmElement.Node(3, GeoUtils.getWorldLat(140 / 256d), GeoUtils.getWorldLon(140 / 256d)),
+        new OsmElement.Node(4, GeoUtils.getWorldLat(0.5), GeoUtils.getWorldLon(0.5)),
+        with(new OsmElement.Way(4), way -> {
+          way.setTag("attr", "value1");
+          way.nodes().add(1, 2, 3, 1);
+        }),
+        with(new OsmElement.Way(5), way -> {
+          way.setTag("attr", "value2");
+          way.nodes().add(2, 4);
+        })
+      ),
+      new Profile() {
+        @Override
+        public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+          if (sourceFeature.canBeLine()) {
+            features.splitLine("split")
+              .setZoomRange(0, 0)
+              .inheritAttrFromSource("attr");
+            features.anyGeometry("any")
+              .setZoomRange(0, 0)
+              .inheritAttrFromSource("attr");
+            features.line("full")
+              .setZoomRange(0, 0)
+              .inheritAttrFromSource("attr");
+            features.polygon("full-polygon")
+              .setZoomRange(0, 0)
+              .inheritAttrFromSource("attr");
+          }
+        }
+
+        @Override
+        public boolean splitOsmWayAtIntersections(OsmElement.Way way) {
+          return true;
+        }
+      }
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(0, 0, 0), List.of(
+        new ComparableFeature(new NormGeometry(TestUtils.newPolygon(120, 120, 140, 120, 140, 140, 120, 120)), "any",
+          Map.of(
+            "attr", "value1"
+          ), 42L),
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(140, 120, 128, 128)), "any", Map.of(
+          "attr", "value2"
+        ), 52L),
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(120, 120, 140, 120, 140, 140, 120, 120)), "full",
+          Map.of(
+            "attr", "value1"
+          ), 42L),
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(140, 120, 128, 128)), "full", Map.of(
+          "attr", "value2"
+        ), 52L),
+
+        new ComparableFeature(new NormGeometry(TestUtils.newPolygon(120, 120, 140, 120, 140, 140, 120, 120)),
+          "full-polygon",
+          Map.of(
+            "attr", "value1"
+          ), 42L),
+
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(120, 120, 140, 120)), "split", Map.of(
+          "attr", "value1"
+        ), 42L),
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(140, 120, 128, 128)), "split", Map.of(
+          "attr", "value2"
+        ), 52L),
+        new ComparableFeature(new NormGeometry(TestUtils.newLineString(140, 120, 140, 140, 120, 120)), "split", Map.of(
+          "attr", "value1"
+        ), 142L)
+      )
+    ), results.tiles);
+  }
+
+  @Test
+  void testSplitOsmLineWithLoop() throws Exception {
+    var results = runWithOsmElements(
+      Map.of("threads", "1"),
+      List.of(
+        new OsmElement.Node(1, GeoUtils.getWorldLat(0.5), GeoUtils.getWorldLon(0.25)),
+        new OsmElement.Node(2, GeoUtils.getWorldLat(0.5), GeoUtils.getWorldLon(0.5)),
+        new OsmElement.Node(3, GeoUtils.getWorldLat(0.5), GeoUtils.getWorldLon(0.75)),
+        new OsmElement.Node(4, GeoUtils.getWorldLat(0.75), GeoUtils.getWorldLon(0.5)),
+        with(new OsmElement.Way(4), way -> {
+          way.setTag("attr", "value1");
+          way.nodes().add(1, 2, 3, 4, 2);
+        })
+      ),
+      new Profile() {
+        @Override
+        public void processFeature(SourceFeature sourceFeature, FeatureCollector features) {
+          if (sourceFeature.canBeLine()) {
+            features.splitLine("layer")
+              .setZoomRange(0, 0)
+              .inheritAttrFromSource("attr");
+          }
+        }
+
+        @Override
+        public boolean splitOsmWayAtIntersections(OsmElement.Way way) {
+          return true;
+        }
+      }
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(0, 0, 0), List.of(
+        feature(newLineString(64, 128, 128, 128), Map.of(
+          "attr", "value1"
+        ), 42),
+        feature(newLineString(128, 128, 192, 128, 128, 192, 128, 128), Map.of(
+          "attr", "value1"
+        ), 142)
+      )
+    ), results.tiles);
+  }
+
   @ParameterizedTest
   @ValueSource(strings = {"multipolygon", "boundary", "land_area"})
   void testOsmMultipolygon(String relationType) throws Exception {
@@ -1212,6 +1606,161 @@ class PlanetilerTests {
           "name", "name value",
           "relname", "rel name"
         ), 173)
+      )
+    ), results.tiles);
+  }
+
+  static Stream<org.junit.jupiter.params.provider.Arguments> polygonCollections() {
+    double x1 = 0.125;
+    double y1 = 0.125;
+    double x2 = 0.875;
+    double y2 = 0.875;
+    double x3 = 0.25;
+    double y3 = 0.25;
+    double x4 = 0.75;
+    double y4 = 0.75;
+    double x5 = 0.375;
+    double y5 = 0.375;
+    double x6 = 0.625;
+    double y6 = 0.625;
+    double lat1 = GeoUtils.getWorldLat(y1);
+    double lng1 = GeoUtils.getWorldLon(x1);
+    double lat2 = GeoUtils.getWorldLat(y2);
+    double lng2 = GeoUtils.getWorldLon(x2);
+    double lat3 = GeoUtils.getWorldLat(y3);
+    double lng3 = GeoUtils.getWorldLon(x3);
+    double lat4 = GeoUtils.getWorldLat(y4);
+    double lng4 = GeoUtils.getWorldLon(x4);
+    double lat5 = GeoUtils.getWorldLat(y5);
+    double lng5 = GeoUtils.getWorldLon(x5);
+    double lat6 = GeoUtils.getWorldLat(y6);
+    double lng6 = GeoUtils.getWorldLon(x6);
+
+    var polygon1 = newPolygon(
+      rectangleCoordList(lng1, lat1, lng2, lat2),
+      List.of(rectangleCoordList(lng3, lat3, lng4, lat4))
+    );
+    var polygon2 = rectangle(lng5, lat5, lng6, lat6);
+
+    return Stream.of(
+      // one collection with several polygons
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          polygon1,
+          polygon2
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      )),
+      // nested collections, i.e. several collection, each with one polygon, in one collection
+      org.junit.jupiter.params.provider.Arguments.of(List.of(
+        newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+          GeoUtils.JTS_FACTORY
+            .createGeometryCollection(Set.of(polygon1).toArray(Geometry[]::new)),
+          GeoUtils.JTS_FACTORY
+            .createGeometryCollection(Set.of(polygon2).toArray(Geometry[]::new))
+        ).toArray(Geometry[]::new)), Map.of(
+          "attr", "value"
+        ))
+      ))
+    );
+  }
+
+  @ParameterizedTest
+  @MethodSource("polygonCollections")
+  void testPolygonCollection(List<SimpleFeature> polygons) throws Exception {
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      polygons,
+      (in, features) -> features.polygon("layer")
+        .setZoomRange(0, 0)
+        .setAttr("name", "name value")
+        .inheritAttrFromSource("attr")
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(0, 0, 0), List.of(
+        feature(rectangle(0.375 * 256, 0.625 * 256), Map.of(
+          "attr", "value",
+          "name", "name value"
+        )),
+        feature(newPolygon(
+          rectangleCoordList(0.125 * 256, 0.875 * 256),
+          List.of(
+            rectangleCoordList(0.25 * 256, 0.75 * 256)
+          )
+        ), Map.of(
+          "attr", "value",
+          "name", "name value"
+        ))
+      )
+    ), results.tiles);
+  }
+
+  @Test
+  void testMixedCollection() throws Exception {
+    double lat1 = GeoUtils.getWorldLat(0.125);
+    double lng1 = GeoUtils.getWorldLon(0.125);
+    var point = newPoint(lng1, lat1);
+
+    double lat2 = GeoUtils.getWorldLat(0.25);
+    double lng2 = GeoUtils.getWorldLon(0.25);
+    double lat3 = GeoUtils.getWorldLat(0.75);
+    double lng3 = GeoUtils.getWorldLon(0.75);
+    var line = newLineString(lng2, lat2, lng3, lat3);
+
+    double lat5 = GeoUtils.getWorldLat(0.375);
+    double lng5 = GeoUtils.getWorldLon(0.375);
+    double lat6 = GeoUtils.getWorldLat(0.625);
+    double lng6 = GeoUtils.getWorldLon(0.625);
+    var polygon = rectangle(lng5, lat5, lng6, lat6);
+
+    var input = List.of(newReaderFeature(GeoUtils.JTS_FACTORY.createGeometryCollection(Set.of(
+      point,
+      line,
+      polygon
+    ).toArray(Geometry[]::new)), Map.of(
+      "attr", "value"
+    )));
+
+    var results = runWithReaderFeatures(
+      Map.of("threads", "1"),
+      input,
+      (in, features) -> {
+        try {
+          // FeatureCollector.anyGeometry() & co. expect just one feature hence to process several possibly even mixed
+          // type features from collection we need a profile to do the iteration itself:
+          var geom = in.worldGeometry();
+          if (geom instanceof GeometryCollection collection) {
+            for (int i = 0; i < collection.getNumGeometries(); i++) {
+              features.geometry("layer", collection.getGeometryN(i))
+                .setZoomRange(0, 0)
+                .setAttr("name", "name value")
+                .inheritAttrFromSource("attr");
+            }
+          } else {
+            throw new RuntimeException("only collections expected in this test");
+          }
+        } catch (GeometryException e) {
+          throw new RuntimeException(e);
+        }
+      }
+    );
+
+    assertSubmap(Map.of(
+      TileCoord.ofXYZ(0, 0, 0), List.of(
+        feature(newPoint(32, 32), Map.of(
+          "attr", "value",
+          "name", "name value"
+        )),
+        feature(rectangle(0.375 * 256, 0.625 * 256), Map.of(
+          "attr", "value",
+          "name", "name value"
+        )),
+        feature(newLineString(64, 64, 192, 192), Map.of(
+          "attr", "value",
+          "name", "name value"
+        ))
       )
     ), results.tiles);
   }
@@ -1378,17 +1927,17 @@ class PlanetilerTests {
   @ParameterizedTest
   @ValueSource(booleans = {false, true})
   void testMergeLineStrings(boolean connectEndpoints) throws Exception {
-    double y = 0.5 + Z15_WIDTH / 2;
+    double y = 0.5 + Z16_WIDTH / 2;
     double lat = GeoUtils.getWorldLat(y);
 
-    double x1 = 0.5 + Z15_WIDTH / 4;
+    double x1 = 0.5 + Z16_WIDTH / 4;
     double lng1 = GeoUtils.getWorldLon(x1);
-    double lng2 = GeoUtils.getWorldLon(x1 + Z15_WIDTH * 10d / 256);
-    double lng3 = GeoUtils.getWorldLon(x1 + Z15_WIDTH * 20d / 256);
-    double lng4 = GeoUtils.getWorldLon(x1 + Z15_WIDTH * 30d / 256);
+    double lng2 = GeoUtils.getWorldLon(x1 + Z16_WIDTH * 10d / 256);
+    double lng3 = GeoUtils.getWorldLon(x1 + Z16_WIDTH * 20d / 256);
+    double lng4 = GeoUtils.getWorldLon(x1 + Z16_WIDTH * 30d / 256);
 
     var results = runWithReaderFeatures(
-      Map.of("threads", "1", "maxzoom", "15"),
+      Map.of("threads", "1", "maxzoom", "16"),
       List.of(
         // merge at z13 (same "group"):
         newReaderFeature(newLineString(
@@ -1415,26 +1964,31 @@ class PlanetilerTests {
     );
 
     assertSubmap(sortListValues(Map.of(
-      TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15), List.of(
+      TileCoord.ofXYZ(Z16_TILES / 2, Z16_TILES / 2, 16), List.of(
         feature(newLineString(64, 128, 74, 128), Map.of("group", "1", "z14attr", "1")),
         feature(newLineString(74, 128, 84, 128), Map.of("group", "1", "z14attr", "2")),
         feature(newLineString(84, 128, 94, 128), Map.of("group", "2", "z14attr", "3"))
       ),
-      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+      TileCoord.ofXYZ(Z15_TILES / 2, Z15_TILES / 2, 15), List.of(
         feature(newLineString(32, 64, 37, 64), Map.of("group", "1", "z14attr", "1")),
         feature(newLineString(37, 64, 42, 64), Map.of("group", "1", "z14attr", "2")),
         feature(newLineString(42, 64, 47, 64), Map.of("group", "2", "z14attr", "3"))
       ),
+      TileCoord.ofXYZ(Z14_TILES / 2, Z14_TILES / 2, 14), List.of(
+        feature(newLineString(16, 32, 18.5, 32), Map.of("group", "1", "z14attr", "1")),
+        feature(newLineString(18.5, 32, 21, 32), Map.of("group", "1", "z14attr", "2")),
+        feature(newLineString(21, 32, 23.5, 32), Map.of("group", "2", "z14attr", "3"))
+      ),
       TileCoord.ofXYZ(Z13_TILES / 2, Z13_TILES / 2, 13), connectEndpoints ? List.of(
-        // merge 32->37 and 37->42 since they have same attrs
-        feature(newLineString(16, 32, 21, 32), Map.of("group", "1")),
-        feature(newLineString(21, 32, 23.5, 32), Map.of("group", "2"))
+        // merge since they have same attrs
+        feature(newLineString(8, 16, 10.5, 16), Map.of("group", "1")),
+        feature(newLineString(10.5, 16, 11.75, 16), Map.of("group", "2"))
       ) : List.of(
         feature(newMultiLineString(
-          newLineString(16, 32, 18.5, 32),
-          newLineString(18.5, 32, 21, 32)
+          newLineString(8, 16, 9.25, 16),
+          newLineString(9.25, 16, 10.5, 16)
         ), Map.of("group", "1")),
-        feature(newLineString(21, 32, 23.5, 32), Map.of("group", "2"))
+        feature(newLineString(10.5, 16, 11.75, 16), Map.of("group", "2"))
       )
     )), sortListValues(results.tiles));
   }
@@ -2112,6 +2666,20 @@ class PlanetilerTests {
     }
   }
 
+  private static TileFormat extractTileFormat(String args) {
+    final Optional<TileFormat> format = Stream.of(TileFormat.values())
+      .filter(fmt -> args.contains("--tile-format=" + fmt.id()))
+      .findFirst();
+
+    if (format.isPresent()) {
+      return format.get();
+    } else if (args.contains("--tile-format=")) {
+      throw new IllegalArgumentException("unhandled tile format");
+    } else {
+      return TileFormat.MVT;
+    }
+  }
+
   private static TileCompression extractTileCompression(String args) {
     if (args.contains("tile-compression=none")) {
       return TileCompression.NONE;
@@ -2131,18 +2699,25 @@ class PlanetilerTests {
     "--free-osm-after-read",
     "--compress-temp",
     "--osm-parse-node-bounds",
+    "--tile-format=mlt",
+    "--tile-format=mlt --mlt-fastpfor --mlt-fsst --mlt-reorder-features --mlt-shared-dict --exclude-ids --mlt-tessellate-polygons --mlt-polygon-outline",
+    "--exclude-ids",
     "--output-format=pmtiles",
+    "--output-format=pmtiles --tile-format=mlt",
     "--output-format=csv",
     "--output-format=tsv",
     "--output-format=proto",
     "--output-format=pbf",
+    "--output-format=pbf --tile-format=mlt",
     "--output-format=json",
     "--output-format=files",
+    "--output-format=files --tile-format=mlt",
     "--tile-compression=none",
     "--tile-compression=gzip",
     "--output-layerstats",
     "--max-point-buffer=1",
     "--osm-test-path=monaco-latest.lz4.osm.pbf",
+    "--parallel-tmp-io",
   })
   void testPlanetilerRunner(String args) throws Exception {
     var argParsed = Arguments.fromArgs(args.split(" "));
@@ -2152,12 +2727,13 @@ class PlanetilerTests {
     final TileCompression tileCompression = extractTileCompression(args);
 
     final TileArchiveConfig.Format format = extractFormat(args);
+    final TileFormat tileFormat = extractTileFormat(args);
     final String outputUri;
     final Path outputPath;
     switch (format) {
       case FILES -> {
         outputPath = tempDir.resolve("output");
-        outputUri = outputPath.toString() + "?format=files";
+        outputUri = outputPath + "?format=files";
       }
       default -> {
         outputPath = tempDir.resolve("output." + format.id());
@@ -2186,7 +2762,7 @@ class PlanetilerTests {
           if (source.canBePolygon() && source.hasTag("building", "yes")) {
             features.polygon("building").setZoomRange(0, 14).setMinPixelSize(1);
           } else if (source.isPoint() && source.hasTag("place")) {
-            features.point("place").setZoomRange(0, 14);
+            features.point("place").setZoomRange(0, 14).inheritAttrFromSource("name");
           }
         }
       })
@@ -2205,18 +2781,31 @@ class PlanetilerTests {
 
     try (var db = readableTileArchiveFactory.create(outputPath)) {
       int features = 0;
-      var tileMap = TestUtils.getTileMap(db, tileCompression);
+      int featuresWithIds = 0;
+      int monacoPoints = 0;
+      var tileMap = TestUtils.getTileMap(db, tileCompression, tileFormat);
       for (var tile : tileMap.values()) {
         for (var feature : tile) {
           feature.geometry().validate();
           features++;
+          if (feature.hasTag("name", "Monaco")) {
+            monacoPoints++;
+          }
+          if (feature.id() != 0) {
+            featuresWithIds++;
+          }
         }
       }
+
+      assertEquals(30, monacoPoints, "monaco points");
 
       int expectedFeatures = args.contains("max-point-buffer=1") ? 2311 : 2313;
 
       assertEquals(22, tileMap.size(), "num tiles");
       assertEquals(expectedFeatures, features, "num feature");
+
+      int expectedIds = args.contains("exclude-ids") ? 0 : expectedFeatures;
+      assertEquals(expectedIds, featuresWithIds);
 
       final boolean checkMetadata = switch (format) {
         case MBTILES -> true;
@@ -2226,6 +2815,10 @@ class PlanetilerTests {
 
       if (checkMetadata) {
         assertSubmap(Map.of(
+          "format", switch (tileFormat) {
+            case MLT -> "application/vnd.maplibre-vector-tile";
+            case UNKNOWN, MVT -> "pbf";
+          },
           "planetiler:version", BuildInfo.get().version(),
           "planetiler:osm:osmosisreplicationtime", "2021-04-21T20:21:46Z",
           "planetiler:osm:osmosisreplicationseq", "2947",
@@ -2267,7 +2860,7 @@ class PlanetilerTests {
           int z = Integer.parseInt(next.get("z"));
           int x = Integer.parseInt(next.get("x"));
           int y = Integer.parseInt(next.get("y"));
-          int hilbert = Integer.parseInt(next.get("hilbert"));
+          long hilbert = Long.parseLong(next.get("hilbert"));
           assertEquals(hilbert, TileCoord.ofXYZ(x, y, z).hilbertEncoded());
           assertTrue(Integer.parseInt(next.get("z")) <= 14, "bad z: " + next);
         }
@@ -2418,7 +3011,48 @@ class PlanetilerTests {
     }
   }
 
-  private void runWithProfile(Path tempDir, Profile profile, boolean force) throws Exception {
+  @Test
+  void testPlanetilerRunnerOvertureSource() throws Exception {
+    Path mbtiles = tempDir.resolve("output.mbtiles");
+    // Pre-populate the download directory with a real parquet file so we can test addOvertureSource
+    // without hitting the network. The boston.parquet file contains building polygons near Boston.
+    Path overtureDir = tempDir.resolve("overture-buildings");
+    var dest = overtureDir.resolve("theme=buildings").resolve("type=building").resolve("part-00000.parquet");
+    FileUtils.createParentDirectories(dest);
+    Files.copy(TestUtils.pathToResource("parquet").resolve("boston.parquet"), dest);
+
+    Planetiler.create(Arguments.fromArgs(
+      "--tmpdir=" + tempDir.resolve("data"),
+      // Override the download directory so addOvertureSource picks up our pre-placed file.
+      // No --download flag here — we're verifying that existing files are processed correctly.
+      "overture-buildings_path=" + overtureDir
+    ))
+      .setProfile(new Profile.NullProfile() {
+        @Override
+        public void processFeature(SourceFeature source, FeatureCollector features) {
+          features.polygon("buildings")
+            .setZoomRange(0, 14)
+            .setMinPixelSize(0)
+            .setAttr("id", source.getString("id"));
+        }
+      })
+      .addOvertureSource("overture-buildings", "buildings", "building", overtureDir)
+      .setOutput(mbtiles)
+      .run();
+
+    try (var db = com.onthegomap.planetiler.mbtiles.Mbtiles.newReadOnlyDatabase(mbtiles)) {
+      long featureCount = 0;
+      for (var tile : TestUtils.getTileMap(db).values()) {
+        for (var feature : tile) {
+          feature.geometry().validate();
+          featureCount++;
+        }
+      }
+      assertTrue(featureCount > 0, "expected features from overture source");
+    }
+  }
+
+  private void runWithProfile(Path tempDir, Profile profile, boolean force) {
     Planetiler.create(Arguments.of("tmpdir", tempDir, "force", Boolean.toString(force)))
       .setProfile(profile)
       .addOsmSource("osm", TestUtils.pathToResource("monaco-latest.osm.pbf"))
@@ -2784,6 +3418,46 @@ class PlanetilerTests {
     assertTrue(translations.careAboutLanguage("tlh"));
     assertTrue(translations.careAboutLanguage("en"));
     assertFalse(translations.careAboutLanguage("fr"));
+  }
+
+  @Test
+  void testReuseFeatureDb() throws Exception {
+    Path mbtiles = tempDir.resolve("output.mbtiles");
+    Path mbtiles2 = tempDir.resolve("output2.mbtiles");
+    Path tmpData = tempDir.resolve("data");
+
+    var profile = new Profile.NullProfile() {
+      @Override
+      public void processFeature(SourceFeature source, FeatureCollector features) {
+        features.point("points")
+          .setZoomRange(0, 14)
+          .setAttr("source", source.getSource());
+      }
+    };
+
+    // first run: build feature DB and tiles
+    Planetiler.create(Arguments.fromArgs("--tmpdir=" + tmpData, "--reuse_featuredb=true"))
+      .setProfile(profile)
+      .addGeoJsonSource("geojson", TestUtils.pathToResource("featurecollection.geojson"), null)
+      .setOutput(mbtiles)
+      .run();
+
+    // second run: reuse feature DB, write to a different output
+    Path missingSource = tmpData.resolve("missing.geojson");
+    Planetiler.create(Arguments.fromArgs("--tmpdir=" + tmpData, "--reuse_featuredb=true", "--force=true"))
+      .setProfile(profile)
+      .addGeoJsonSource("geojson", missingSource, null)
+      .setOutput(mbtiles2)
+      .run();
+
+    // both outputs should contain the same tiles
+    try (
+      Mbtiles db1 = Mbtiles.newReadOnlyDatabase(mbtiles);
+      Mbtiles db2 = Mbtiles.newReadOnlyDatabase(mbtiles2)
+    ) {
+      assertEquals(TestUtils.getTileMap(db1), TestUtils.getTileMap(db2));
+    }
+    assertArrayEquals(Files.readAllBytes(mbtiles), Files.readAllBytes(mbtiles2));
   }
 
   @FunctionalInterface

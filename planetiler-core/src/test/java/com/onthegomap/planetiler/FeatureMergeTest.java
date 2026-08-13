@@ -3,10 +3,14 @@ package com.onthegomap.planetiler;
 import static com.onthegomap.planetiler.TestUtils.*;
 import static com.onthegomap.planetiler.util.Gzip.gunzip;
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertInstanceOf;
+import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.fail;
 
 import com.carrotsearch.hppc.IntArrayList;
 import com.carrotsearch.hppc.IntObjectMap;
 import com.onthegomap.planetiler.collection.Hppc;
+import com.onthegomap.planetiler.geo.GeoUtils;
 import com.onthegomap.planetiler.geo.GeometryException;
 import com.onthegomap.planetiler.geo.GeometryPipeline;
 import com.onthegomap.planetiler.geo.GeometryType;
@@ -29,6 +33,7 @@ import org.locationtech.jts.geom.GeometryCollection;
 import org.locationtech.jts.geom.LineString;
 import org.locationtech.jts.geom.Point;
 import org.locationtech.jts.geom.Polygon;
+import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKBReader;
 import org.slf4j.Logger;
@@ -81,7 +86,7 @@ class FeatureMergeTest {
   void dontMergeDisconnectedLineStrings() {
     assertEquals(
       List.of(
-        feature(1, newMultiLineString(
+        feature(0, newMultiLineString(
           newLineString(10, 10, 20, 20),
           newLineString(30, 30, 40, 40)
         ), Map.of())
@@ -121,7 +126,7 @@ class FeatureMergeTest {
   void mergeConnectedLineStringsSameAttrs() {
     assertEquals(
       List.of(
-        feature(1, newLineString(10, 10, 30, 30), Map.of("a", 1))
+        feature(0, newLineString(10, 10, 30, 30), Map.of("a", 1))
       ),
       FeatureMerge.mergeLineStrings(
         List.of(
@@ -187,7 +192,7 @@ class FeatureMergeTest {
   void mergeMultiLineString() {
     assertEquals(
       List.of(
-        feature(1, newLineString(10, 10, 40, 40), Map.of("a", 1))
+        feature(0, newLineString(10, 10, 40, 40), Map.of("a", 1))
       ),
       FeatureMerge.mergeLineStrings(
         List.of(
@@ -210,7 +215,7 @@ class FeatureMergeTest {
       List.of(
         feature(3, newPoint(5, 5), Map.of("a", 1)),
         feature(4, rectangle(50, 60), Map.of("a", 1)),
-        feature(1, newLineString(10, 10, 30, 30), Map.of("a", 1))
+        feature(0, newLineString(10, 10, 30, 30), Map.of("a", 1))
       ),
       FeatureMerge.mergeLineStrings(
         List.of(
@@ -230,7 +235,7 @@ class FeatureMergeTest {
   void mergeLineStringRemoveDetailOutsideTile() {
     assertEquals(
       List.of(
-        feature(1, newMultiLineString(
+        feature(0, newMultiLineString(
           newLineString(
             10, 10,
             -10, 20,
@@ -273,7 +278,7 @@ class FeatureMergeTest {
   void mergeLineStringMinLength() {
     assertEquals(
       List.of(
-        feature(2, newLineString(20, 20, 20, 25), Map.of("a", 1))
+        feature(0, newLineString(20, 20, 20, 25), Map.of("a", 1))
       ),
       FeatureMerge.mergeLineStrings(
         List.of(
@@ -317,7 +322,7 @@ class FeatureMergeTest {
   void dontMergeDisconnectedPolygons() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, newMultiPolygon(
+        feature(0, newMultiPolygon(
           rectangle(10, 20),
           rectangle(22, 10, 30, 20)
         ), Map.of("a", 1))
@@ -359,7 +364,7 @@ class FeatureMergeTest {
   void mergeConnectedPolygonsWithSameAttrs() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, rectangle(10, 10, 30, 20), Map.of("a", 1))
+        feature(0, rectangle(10, 10, 30, 20), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -382,7 +387,7 @@ class FeatureMergeTest {
     );
     assertEquivalentFeatures(
       List.of(
-        feature(1, newPolygon(
+        feature(0, newPolygon(
           10, 10,
           20, 10,
           20, 20,
@@ -445,7 +450,7 @@ class FeatureMergeTest {
   void mergeMultiPolygons() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, rectangle(10, 10, 40, 20), Map.of("a", 1))
+        feature(0, rectangle(10, 10, 40, 20), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -487,7 +492,7 @@ class FeatureMergeTest {
   void mergePolygonsWithinMinDist() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, rectangle(10, 10, 30, 20), Map.of("a", 1))
+        feature(0, rectangle(10, 10, 30, 20), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -506,7 +511,7 @@ class FeatureMergeTest {
   void mergePolygonsInsideEachother() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, rectangle(10, 40), Map.of("a", 1))
+        feature(0, rectangle(10, 40), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -525,7 +530,7 @@ class FeatureMergeTest {
   void dontMergePolygonsAboveMinDist() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, newMultiPolygon(
+        feature(0, newMultiPolygon(
           rectangle(10, 20),
           rectangle(21.1, 10, 30, 20)
         ), Map.of("a", 1))
@@ -565,7 +570,7 @@ class FeatureMergeTest {
   void allowPolygonsAboveMinSize() throws GeometryException {
     assertEquivalentFeatures(
       List.of(
-        feature(1, newMultiPolygon(
+        feature(0, newMultiPolygon(
           rectangle(10, 20),
           rectangle(30, 10, 40, 20)
         ), Map.of("a", 1))
@@ -710,8 +715,8 @@ class FeatureMergeTest {
   @ParameterizedTest
   @CsvSource({
     "bostonbuildings.mbtiles, 2477, 3028, 13, 1141",
-    "bostonbuildings.mbtiles, 2481, 3026, 13, 949",
-    "bostonbuildings.mbtiles, 2479, 3028, 13, 1074",
+    "bostonbuildings.mbtiles, 2481, 3026, 13, 947",
+    "bostonbuildings.mbtiles, 2479, 3028, 13, 1073",
     "jakartabuildings.mbtiles, 6527, 4240, 13, 410"
   })
   void testMergeManyPolygons__TAKES_A_MINUTE_OR_TWO(String file, int x, int y, int z, int expected)
@@ -739,12 +744,99 @@ class FeatureMergeTest {
   }
 
   @Test
+  void testProtomaps538LakeMerge() throws IOException, GeometryException {
+    // see https://github.com/protomaps/basemaps/issues/538
+    try (var db = Mbtiles.newReadOnlyDatabase(TestUtils.pathToResource("protomaps538lakemerge.mbtiles"))) {
+      byte[] tileData = db.getTile(35, 46, 7);
+      byte[] gunzipped = gunzip(tileData);
+      List<VectorTile.Feature> features = VectorTile.decode(gunzipped);
+      double areaBefore = features.stream().mapToDouble(f -> {
+        try {
+          return f.geometry().decode().getArea();
+        } catch (GeometryException e) {
+          throw new RuntimeException(e);
+        }
+      }).sum();
+      List<VectorTile.Feature> merged = FeatureMerge.mergeNearbyPolygons(features, 1.0, 1.0, 0.5, 0.0625,
+        Stats.inMemory(), null);
+      double areaAfter = 0;
+      for (var feature : merged) {
+        Geometry geometry = feature.geometry().decode();
+        areaAfter += geometry.getArea();
+        TestUtils.validateGeometry(geometry);
+      }
+      double ratio = areaAfter / areaBefore;
+      assertTrue(ratio > 0.99 && ratio < 1.01, "Area changed too much %f -> %f".formatted(areaBefore, areaAfter));
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "/protomaps538/buffer_union_unbuffer_05/13_2039_3211.wkb",
+    "/protomaps538/buffer_union_unbuffer_05/13_4732_2939.wkb",
+    "/protomaps538/buffer_union_unbuffer_05/13_6684_3565.wkb",
+    "/protomaps538/buffer_union_unbuffer_05/13_4255_2678.wkb",
+    "/protomaps538/buffer_union_unbuffer_05/13_4184_2768.wkb",
+    "/protomaps538/buffer_union_unbuffer_05/13_2922_4800.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2020_1982.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_3344_1642.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2029_1319.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1120_684.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_1088_1644.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1710_942.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1012_663.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2202_1589.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_1114_1690.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/10_507_374.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2039_1524.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1386_623.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_691_1453.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_362_747.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2048_1360.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2168_1987.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/9_284_180.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/10_567_334.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1444_935.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1102_961.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2049_1364.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/10_719_385.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2453_1390.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1129_604.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1016_666.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_343_700.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_3368_2429.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2536_1140.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_2322_1308.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/11_1117_700.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_995_1490.wkb",
+    "/protomaps538/buffer_union_unbuffer_01/12_662_1601.wkb",
+  })
+  void testProtomaps538LakeMerge(String file) throws Exception {
+    try (var is = getClass().getResource(file).openStream()) {
+      GeometryCollection collection = (GeometryCollection) new WKBReader().read(is.readAllBytes());
+      double areaBefore = Math.max(collection.buffer(0).getArea(), collection.union().getArea());
+      double buffer = file.contains("unbuffer_01") ? 0.1 : 0.5;
+      List<Geometry> geoms = new ArrayList<>();
+      for (int i = 0; i < collection.getNumGeometries(); i++) {
+        geoms.add(collection.getGeometryN(i));
+      }
+      Geometry merged = FeatureMerge.bufferUnionUnbuffer(buffer, geoms, Stats.inMemory());
+      merged = GeoUtils.snapAndFixPolygon(merged, Stats.inMemory(), "merge").reverse();
+      assertInstanceOf(Polygonal.class, merged);
+      double areaAfter = merged.getArea();
+      TestUtils.validateGeometry(merged);
+      double ratio = areaAfter / areaBefore;
+      assertTrue(ratio > 0.99 && ratio < 1.01, "Area changed too much %f -> %f".formatted(areaBefore, areaAfter));
+    }
+  }
+
+  @Test
   void mergeMultiPolygon() throws GeometryException {
     var innerRing = rectangleCoordList(12, 18);
     Collections.reverse(innerRing);
     assertTopologicallyEquivalentFeatures(
       List.of(
-        feature(1, newPolygon(rectangleCoordList(10, 22), List.of(innerRing)), Map.of("a", 1))
+        feature(0, newPolygon(rectangleCoordList(10, 22), List.of(innerRing)), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -766,7 +858,7 @@ class FeatureMergeTest {
     Collections.reverse(innerRing);
     assertTopologicallyEquivalentFeatures(
       List.of(
-        feature(1, rectangle(10, 22), Map.of("a", 1))
+        feature(0, rectangle(10, 22), Map.of("a", 1))
       ),
       FeatureMerge.mergeNearbyPolygons(
         List.of(
@@ -843,7 +935,7 @@ class FeatureMergeTest {
     assertTopologicallyEquivalentFeatures(
       List.of(
         feature(4, otherGeometry, Map.of("a", 1)),
-        feature(1, combineJTS.apply(List.of(geom1, geom2, geom3, geom4)), Map.of("a", 1)),
+        feature(0, combineJTS.apply(List.of(geom1, geom2, geom3, geom4)), Map.of("a", 1)),
         feature(3, geom5, Map.of("a", 2))
       ),
       merge.apply(
@@ -964,5 +1056,174 @@ class FeatureMergeTest {
       }
       FeatureMerge.bufferUnionUnbuffer(0.5, geometries, Stats.inMemory());
     }
+  }
+
+  @Test
+  void mergeFillPolygonsNormalizes() throws GeometryException {
+    assertEquals(
+      List.of(
+        rectangle(-2, 258)
+      ),
+      FeatureMerge.mergeNearbyPolygons(
+        List.of(
+          feature(1, rectangle(-2, -2, 200, 258), Map.of()),
+          feature(2, rectangle(180, -2, 258, 258), Map.of())
+        ),
+        0,
+        0,
+        0,
+        0
+      ).stream().map(feature -> {
+        try {
+          return feature.geometry().decode();
+        } catch (GeometryException e) {
+          return fail(e);
+        }
+      }).toList()
+    );
+  }
+
+  @Test
+  void mergeNormalizeOuterRing() throws GeometryException {
+    var result = FeatureMerge.mergeNearbyPolygons(
+      List.of(
+        feature(1, rectangle(-2, -2, 10, 258), Map.of()),
+        feature(1, rectangle(-2, -2, 258, 10), Map.of()),
+        feature(1, rectangle(246, -2, 258, 258), Map.of()),
+        feature(1, rectangle(-2, 246, 258, 258), Map.of())
+      ),
+      0,
+      0,
+      0,
+      0
+    );
+    Polygon poly = (Polygon) result.getFirst().geometry().decode();
+    assertEquals(rectangle(-2, 258).getExteriorRing(), poly.getExteriorRing());
+    assertEquals(1, poly.getNumInteriorRing());
+    assertTopologicallyEquivalentFeature(rectangle(10, 246).getExteriorRing().reverse(), poly.getInteriorRingN(0));
+  }
+
+  @Test
+  void mergeFillPolygonsDoesNotNormalizeIrregularFill() throws GeometryException {
+    assertEquivalentFeatures(
+      List.of(
+        feature(0, newPolygon(
+          -2, -2,
+          200, -2,
+          200, -1,
+          258, -1,
+          258, 257,
+          200, 257,
+          200, 258,
+          -2, 258,
+          -2, -2
+        ), Map.of())
+      ),
+      FeatureMerge.mergeNearbyPolygons(
+        List.of(
+          feature(1, rectangle(-2, -2, 200, 258), Map.of()),
+          feature(2, rectangle(180, -1, 258, 257), Map.of())
+        ),
+        0,
+        0,
+        0,
+        0
+      )
+    );
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "0, 0, 0",
+    "0, -1, 0",
+    "0, -1, -1",
+    "0, 0, -1",
+  })
+  void mergeLineStringZeroMinLength(double minLength, double minTolerance, double buffer) throws GeometryException {
+    var input = feature(1, newLineString(10, 10, 10.25, 10, 20, 10), Map.of());
+    var actual = FeatureMerge.mergeLineStrings(
+      List.of(
+        feature(1, newLineString(10, 10, 10.25, 10, 20, 10), Map.of())
+      ),
+      minLength,
+      minTolerance,
+      buffer
+    );
+    var actualSingle = actual.getFirst();
+    assertEquals(input.geometry().decode(), actualSingle.geometry().decode());
+    assertEquals(List.of(input), actual);
+  }
+
+  @Test
+  void mergedLineStringIdEndsInZero() {
+    var result = FeatureMerge.mergeLineStrings(
+      List.of(
+        feature(123, newLineString(10, 10, 20, 20), Map.of("a", 1)),
+        feature(456, newLineString(20, 20, 30, 30), Map.of("a", 1))
+      ),
+      0, 0, 0
+    );
+    assertEquals(1, result.size());
+    assertEquals(120, result.getFirst().id(), "merged feature ID should end in 0");
+  }
+
+  @Test
+  void mergedMultiPointIdEndsInZero() {
+    var result = FeatureMerge.mergeMultiPoint(
+      List.of(
+        feature(123, newPoint(10, 10), Map.of("a", 1)),
+        feature(456, newPoint(20, 20), Map.of("a", 1))
+      )
+    );
+    assertEquals(1, result.size());
+    assertEquals(120, result.getFirst().id(), "merged feature ID should end in 0");
+  }
+
+  @Test
+  void mergedMultiPolygonIdEndsInZero() {
+    var result = FeatureMerge.mergeMultiPolygon(
+      List.of(
+        feature(123, rectangle(10, 20), Map.of("a", 1)),
+        feature(456, rectangle(30, 40), Map.of("a", 1))
+      )
+    );
+    assertEquals(1, result.size());
+    assertEquals(120, result.getFirst().id(), "merged feature ID should end in 0");
+  }
+
+  @Test
+  void mergedMultiLineStringIdEndsInZero() {
+    var result = FeatureMerge.mergeMultiLineString(
+      List.of(
+        feature(123, newLineString(10, 10, 20, 20), Map.of("a", 1)),
+        feature(456, newLineString(30, 30, 40, 40), Map.of("a", 1))
+      )
+    );
+    assertEquals(1, result.size());
+    assertEquals(120, result.getFirst().id(), "merged feature ID should end in 0");
+  }
+
+  @Test
+  void mergedNearbyPolygonsIdEndsInZero() throws GeometryException {
+    var result = FeatureMerge.mergeNearbyPolygons(
+      List.of(
+        feature(123, rectangle(10, 20), Map.of("a", 1)),
+        feature(456, rectangle(20, 10, 30, 20), Map.of("a", 1))
+      ),
+      0, 0, 0, 1
+    );
+    assertEquals(1, result.size());
+    assertEquals(120, result.getFirst().id(), "merged feature ID should end in 0");
+  }
+
+  @Test
+  void singleFeatureIdUnchanged() {
+    var result = FeatureMerge.mergeMultiPoint(
+      List.of(
+        feature(123, newPoint(10, 10), Map.of("a", 1))
+      )
+    );
+    assertEquals(1, result.size());
+    assertEquals(123, result.getFirst().id(), "single feature ID should not be modified");
   }
 }

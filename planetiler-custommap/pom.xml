@@ -41,7 +41,7 @@
       <dependency>
         <groupId>org.projectnessie.cel</groupId>
         <artifactId>cel-bom</artifactId>
-        <version>0.5.1</version>
+        <version>0.6.0</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>
@@ -56,10 +56,11 @@
       </plugin>
 
       <plugin>
-        <artifactId>maven-deploy-plugin</artifactId>
+        <groupId>org.sonatype.central</groupId>
+        <artifactId>central-publishing-maven-plugin</artifactId>
         <configuration>
           <!-- we don't want to deploy this module -->
-          <skip>true</skip>
+          <skipPublishing>true</skipPublishing>
         </configuration>
       </plugin>
     </plugins>

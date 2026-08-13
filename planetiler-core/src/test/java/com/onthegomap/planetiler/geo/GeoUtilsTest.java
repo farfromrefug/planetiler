@@ -2,20 +2,25 @@ package com.onthegomap.planetiler.geo;
 
 import static com.onthegomap.planetiler.TestUtils.*;
 import static com.onthegomap.planetiler.geo.GeoUtils.*;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.junit.jupiter.api.Assertions.*;
 
 import com.onthegomap.planetiler.stats.Stats;
 import java.util.List;
+import org.geotools.api.referencing.FactoryException;
+import org.geotools.api.referencing.operation.TransformException;
+import org.geotools.geometry.jts.JTS;
+import org.geotools.referencing.CRS;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.locationtech.jts.algorithm.Orientation;
+import org.locationtech.jts.geom.CoordinateXY;
+import org.locationtech.jts.geom.Envelope;
 import org.locationtech.jts.geom.Geometry;
 import org.locationtech.jts.geom.LinearRing;
 import org.locationtech.jts.geom.Point;
+import org.locationtech.jts.geom.Polygonal;
 import org.locationtech.jts.geom.util.AffineTransformation;
 import org.locationtech.jts.io.ParseException;
 import org.locationtech.jts.io.WKTReader;
@@ -374,6 +379,7 @@ class GeoUtilsTest {
         """),
       Stats.inMemory(), "test");
     assertTrue(result.isValid());
+    assertInstanceOf(Polygonal.class, result);
     assertEquals(3.083984375, result.getArea(), 1e-5);
   }
 
@@ -399,6 +405,7 @@ class GeoUtilsTest {
         )
         """);
     var result = GeoUtils.snapAndFixPolygon(orig, Stats.inMemory(), "test");
+    assertInstanceOf(Polygonal.class, result);
     var point = newPoint(1.14602002962965, 0.76978969252622);
     assertTrue(result.isValid());
     assertFalse(result.contains(point));
@@ -419,6 +426,7 @@ class GeoUtilsTest {
         )
         """);
     var result = GeoUtils.snapAndFixPolygon(orig, Stats.inMemory(), "test");
+    assertInstanceOf(Polygonal.class, result);
     assertTrue(result.isValid());
     assertFalse(Orientation.isCCWArea(result.getCoordinates()));
   }
@@ -490,5 +498,109 @@ class GeoUtilsTest {
     assertEquals(15051, GeoUtils.lengthInMeters(newLineString(
       47.234, 24.235,
       47.234 + 0.1, 24.235 - 0.1)), 1d);
+  }
+
+  @Test
+  void testEnvelopeToString() {
+    var env = new Envelope();
+    assertEquals("Envelope(0.0,0.0,-1.0,-1.0)", GeoUtils.envelopeToString(env));
+    env.expandToInclude(0, 1);
+    env.expandToInclude(2, 3);
+    assertEquals("Envelope(0.0,1.0,2.0,3.0)", GeoUtils.envelopeToString(env));
+    assertEquals("null", GeoUtils.envelopeToString(null));
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+    textBlock = """
+        EPSG:4326 | 1 | 2
+        EPSG:4326:lon_first | 2 | 1
+        EPSG:4326:lat_first | 1 | 2
+        EPSG:3857 | 222684.2 | 111319.5
+        GEOGCS["WGS 84", DATUM["WGS_1984", SPHEROID["WGS 84", 6378137, 298.257223563]], PRIMEM["Greenwich", 0], UNIT["degree", 0.0174532925199433]] | 2 | 1
+        GEOGCS["WGS 84", DATUM["WGS_1984", SPHEROID["WGS 84", 6378137, 298.257223563]], PRIMEM["Greenwich", 0], AXIS["Latitude", NORTH], AXIS["Longitude", EAST], UNIT["degree", 0.0174532925199433]] | 1 | 2
+      """,
+    delimiter = '|')
+  void testCrsDecode(String code, double expectedLat, double expectedLon) throws FactoryException, TransformException {
+    var from = CRS.decode("EPSG:4326", true);
+    var to = GeoUtils.decodeCRS(code);
+    var xform = GeoUtils.findMathTransform(from, to, null);
+    var a = new CoordinateXY(1, 2);
+    var b = new CoordinateXY();
+    JTS.transform(a, b, xform);
+    assertEquals(expectedLon, b.getX(), 1e-1);
+    assertEquals(expectedLat, b.getY(), 1e-1);
+  }
+
+  @ParameterizedTest
+  @CsvSource(
+    textBlock = """
+        EPSG:4326
+        EPSG:4326:lon_first
+        EPSG:4326:lat_first
+        GEOGCS["WGS 84", DATUM["WGS_1984", SPHEROID["WGS 84", 6378137, 298.257223563]], PRIMEM["Greenwich", 0], UNIT["degree", 0.0174532925199433]]
+        GEOGCS["WGS 84", DATUM["WGS_1984", SPHEROID["WGS 84", 6378137, 298.257223563]], PRIMEM["Greenwich", 0], AXIS["Latitude", NORTH], AXIS["Longitude", EAST], UNIT["degree", 0.0174532925199433]]
+        GEOGCS["WGS 84", DATUM["WGS_1984", SPHEROID["WGS 84", 6378137, 298.257223563]], PRIMEM["Greenwich", 0], AXIS["Longitude", EAST], AXIS["Latitude", NORTH], UNIT["degree", 0.0174532925199433]]
+      """,
+    delimiter = '|')
+  void testCrsDecodeForceCrs(String code) throws FactoryException, TransformException {
+    var from = GeoUtils.decodeCRS(code);
+    var to = CRS.decode("EPSG:4326", true);
+    var xform1 = GeoUtils.findMathTransform(from, to, true);
+    var xform2 = GeoUtils.findMathTransform(from, to, false);
+    var a = new CoordinateXY(1, 2);
+    var b = new CoordinateXY();
+    JTS.transform(a, b, xform1);
+    assertEquals(1, b.getX(), 1e-1);
+    assertEquals(2, b.getY(), 1e-1);
+
+    for (double x : List.of(-180, 0, 180)) {
+      for (double y : List.of(-85, 0, 85)) {
+        a = new CoordinateXY(x, y);
+        JTS.transform(a, b, xform1);
+        assertEquals(x, b.getX(), 1e-1, x + ", " + y);
+        assertEquals(y, b.getY(), 1e-1, x + ", " + y);
+
+        JTS.transform(a, b, xform2);
+        assertEquals(y, b.getX(), 1e-1, x + ", " + y);
+        assertEquals(x, b.getY(), 1e-1, x + ", " + y);
+      }
+    }
+  }
+
+  @Test
+  void testCrsDecodeGarbage() {
+    assertThrows(FactoryException.class, () -> GeoUtils.decodeCRS("garbage"));
+    assertThrows(FactoryException.class, () -> GeoUtils.decodeCRS("GEGCS["));
+  }
+
+  @Test
+  void testCrsDecodeDefaultAxisOrder() throws FactoryException, TransformException {
+    var lonFirst = CRS.decode("EPSG:4326", true);
+    var latFirst = CRS.decode("EPSG:4326", false);
+
+    var point = newPoint(1, 2);
+    var transposed = newPoint(2, 1);
+
+    assertEquals(point,
+      JTS.transform(point, CRS.findMathTransform(lonFirst, GeoUtils.decodeCRS("EPSG:4326", lonFirst))));
+    assertEquals(transposed,
+      JTS.transform(point, CRS.findMathTransform(lonFirst, GeoUtils.decodeCRS("EPSG:4326", latFirst))));
+    assertEquals(point,
+      JTS.transform(point, CRS.findMathTransform(lonFirst, GeoUtils.decodeCRS("EPSG:4326:lon_first", latFirst))));
+  }
+
+
+  @ParameterizedTest
+  @ValueSource(strings = {
+    "POLYGON ((178.80078125 -2.232421875, 177.3359375 -2.48828125, 177.474609375 -3.828125, 177.6048093077957 -4, 181.6829622310952 -4, 181.51171875 -3.9296875, 179.58984375 -3.44140625, 178.80078125 -2.232421875), (178.9876130756579 -4, 178.830078125 -3.990234375, 178.8322088068182 -4, 178.9876130756579 -4))",
+    "MULTIPOLYGON (((40.53515625 259.98046875, 40.55303296657843 260, 40.5148361773021 260, 40.53515625 259.98046875)), ((38.84765625 254.9375, 36.3359375 252.28125, 39.53515625 248.98046875, 43.9375 252.98046875, 41.546875 255.23046875, 40.11328125 256.28125, 38.84765625 254.9375)))",
+  })
+  void testSnapAndFixRemainsPolygon(String wkt) throws GeometryException, ParseException {
+    var orig = new WKTReader().read(wkt);
+    var result = GeoUtils.snapAndFixPolygon(orig, Stats.inMemory(), "test");
+    assertInstanceOf(Polygonal.class, result, result::toString);
+    assertTrue(result.isValid());
+    assertFalse(Orientation.isCCWArea(result.getCoordinates()));
   }
 }

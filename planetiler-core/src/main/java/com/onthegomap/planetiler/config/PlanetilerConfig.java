@@ -2,6 +2,7 @@ package com.onthegomap.planetiler.config;
 
 import com.onthegomap.planetiler.archive.TileArchiveConfig;
 import com.onthegomap.planetiler.archive.TileCompression;
+import com.onthegomap.planetiler.archive.TileFormat;
 import com.onthegomap.planetiler.collection.LongLongMap;
 import com.onthegomap.planetiler.collection.Storage;
 import com.onthegomap.planetiler.reader.osm.PolyFileReader;
@@ -10,6 +11,7 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.file.Path;
 import java.time.Duration;
+import java.util.List;
 import java.util.stream.Stream;
 
 /**
@@ -55,17 +57,28 @@ public record PlanetilerConfig(
   Boolean color,
   boolean keepUnzippedSources,
   TileCompression tileCompression,
+  TileFormat tileFormat,
+  boolean excludeIds,
+  boolean mltFsst,
+  boolean mltFastPfor,
+  boolean mltTessellatePolygons,
+  boolean mltPolygonOutline,
+  boolean mltReorderFeature,
+  boolean mltSharedDictionaries,
   boolean outputLayerStats,
   String debugUrlPattern,
   Path tmpDir,
   Path tileWeights,
   double maxPointBuffer,
   boolean logJtsExceptions,
-  int featureSourceIdMultiplier
+  int featureSourceIdMultiplier,
+  List<String> extraNameTags,
+  boolean reuseFeatureDb,
+  boolean parallelTempIO
 ) {
 
   public static final int MIN_MINZOOM = 0;
-  public static final int MAX_MAXZOOM = 15;
+  public static final int MAX_MAXZOOM = 16;
   private static final int DEFAULT_MAXZOOM = 14;
 
   public PlanetilerConfig {
@@ -100,11 +113,14 @@ public record PlanetilerConfig(
       "default storage type for temporary data, one of " + Stream.of(Storage.values()).map(
         Storage::id).toList(),
       fallbackTempStorage);
+    boolean parallelTempIO = arguments.getBoolean("parallel_tmp_io",
+      "Use unlimited parallelism reading/writing temp files (ie. if using tmpfs or ramfs for temp storage)",
+      false);
     int threads = arguments.threads();
     int featureWriteThreads =
       arguments.getInteger("write_threads", "number of threads to use when writing temp features",
         // defaults: <48 cpus=1 writer, 48-80=2 writers, 80-112=3 writers, 112-144=4 writers, ...
-        Math.max(1, (threads - 16) / 32 + 1));
+        parallelTempIO ? 1 : Math.max(1, (threads - 16) / 32 + 1));
     int featureProcessThreads =
       arguments.getInteger("process_threads", "number of threads to use when processing input features",
         Math.max(threads < 8 ? threads : (threads - featureWriteThreads), 1));
@@ -125,6 +141,11 @@ public record PlanetilerConfig(
       arguments.getInteger("render_maxzoom", "maximum rendering zoom level up to " + MAX_MAXZOOM,
         Math.max(maxzoom, DEFAULT_MAXZOOM));
     Path tmpDir = arguments.file("tmpdir|tmp", "temp directory", Path.of("data", "tmp"));
+    List<String> extraNameTags = arguments.getList("extra_name_tags", "Extra name tags to copy from OSM to output",
+      List.of());
+
+    boolean mltAdvanced =
+      arguments.getBoolean("mlt_advanced", "Use FSST and FastPFOR encoding schemes when tile format=MLT", false);
 
     return new PlanetilerConfig(
       arguments,
@@ -151,9 +172,9 @@ public record PlanetilerConfig(
         "compress temporary feature storage (uses more CPU, but less disk space)", false),
       arguments.getBoolean("mmap_temp", "use memory-mapped IO for temp feature files", true),
       arguments.getInteger("sort_max_readers", "maximum number of concurrent read threads to use when sorting chunks",
-        6),
+        parallelTempIO ? featureProcessThreads : 6),
       arguments.getInteger("sort_max_writers", "maximum number of concurrent write threads to use when sorting chunks",
-        6),
+        parallelTempIO ? featureProcessThreads : 6),
       arguments
         .getString("nodemap_type", "type of node location map, one of " + Stream.of(LongLongMap.Type.values()).map(
           t -> t.id()).toList(), LongLongMap.Type.SPARSE_ARRAY.id()),
@@ -168,7 +189,7 @@ public record PlanetilerConfig(
       arguments.getString("http_user_agent", "User-Agent header to set when downloading files over HTTP",
         "Planetiler downloader (https://github.com/onthegomap/planetiler)"),
       arguments.getDuration("http_timeout", "Timeout to use when downloading files over HTTP", "30s"),
-      arguments.getInteger("http_retries", "Retries to use when downloading files over HTTP", 1),
+      arguments.getInteger("http_retries", "Retries to use when downloading files over HTTP", 5),
       arguments.getDuration("http_retry_wait", "How long to wait before retrying HTTP request", "5s"),
       arguments.getLong("download_chunk_size_mb", "Size of file chunks to download in parallel in megabytes", 100),
       arguments.getInteger("download_threads", "Number of parallel threads to use when downloading each file", 1),
@@ -203,6 +224,21 @@ public record PlanetilerConfig(
           "the tile compression, one of " +
             TileCompression.availableValues().stream().map(TileCompression::id).toList(),
           "gzip")),
+      TileFormat
+        .fromId(arguments.getString("tile_format",
+          "the tile format, one of " +
+            TileFormat.availableValues().stream().map(TileFormat::id).toList(),
+          "mvt")),
+      arguments.getBoolean("exclude_ids", "Exclude feature IDs from generated vector tiles", false),
+      arguments.getBoolean("mlt_fastpfor", "Use FastPFOR encoding when tile format=MLT", mltAdvanced),
+      arguments.getBoolean("mlt_fsst", "Use FSST encoding when tile format=MLT", mltAdvanced),
+      arguments.getBoolean("mlt_tessellate_polygons",
+        "Pre-triangulate polygons when tile format=MLT so that clients do not need to", false),
+      arguments.getBoolean("mlt_polygon_outline",
+        "Store polygon outlines together with pre-triangulated polygons", false),
+      arguments.getBoolean("mlt_reorder_features",
+        "Allow re-ordering output features within each layer when tile format=MLT to reduce tile sizes", false),
+      arguments.getBoolean("mlt_shared_dict", "Share dictionaries between string fields when tile format=MLT", false),
       arguments.getBoolean("output_layerstats", "output a tsv.gz file for each tile/layer size", false),
       arguments.getString("debug_url", "debug url to use for displaying tiles with {z} {lat} {lon} placeholders",
         "https://onthegomap.github.io/planetiler-demo/#{z}/{lat}/{lon}"),
@@ -218,7 +254,12 @@ public record PlanetilerConfig(
       arguments.getInteger("feature_source_id_multiplier",
         "Set vector tile feature IDs to (featureId * thisValue) + sourceId " +
           "where sourceId is 1 for OSM nodes, 2 for ways, 3 for relations, and 0 for other sources. Set to false to disable.",
-        10)
+        10),
+      extraNameTags,
+      arguments.getBoolean("reuse_featuredb",
+        "Reuse existing feature DB on disk, skipping source reading stages (for iterating on post-processing logic)",
+        false),
+      parallelTempIO
     );
   }
 

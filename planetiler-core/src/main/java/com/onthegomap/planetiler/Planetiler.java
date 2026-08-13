@@ -30,7 +30,9 @@ import com.onthegomap.planetiler.util.Downloader;
 import com.onthegomap.planetiler.util.FileUtils;
 import com.onthegomap.planetiler.util.Format;
 import com.onthegomap.planetiler.util.Geofabrik;
+import com.onthegomap.planetiler.util.Glob;
 import com.onthegomap.planetiler.util.LogUtil;
+import com.onthegomap.planetiler.util.OvertureStac;
 import com.onthegomap.planetiler.util.ResourceUsage;
 import com.onthegomap.planetiler.util.TileSizeStats;
 import com.onthegomap.planetiler.util.TopOsmTiles;
@@ -47,8 +49,13 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.function.Function;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import org.apache.commons.lang3.StringUtils;
@@ -93,7 +100,7 @@ public class Planetiler {
   private final Path multipolygonPath;
   private final Path featureDbPath;
   private final Path onlyRunTests;
-  private boolean downloadSources;
+  private final boolean downloadSources;
   private final boolean refreshSources;
   private final boolean onlyDownloadSources;
   private final boolean parseNodeBounds;
@@ -119,6 +126,7 @@ public class Planetiler {
   private int wikidataUpdateLimit = 0;
   private final boolean fetchOsmTileStats;
   private TileArchiveMetadata tileArchiveMetadata;
+  private final ExecutorService virtualThreadPoolExecutor = Executors.newVirtualThreadPerTaskExecutor();
 
   private Planetiler(Arguments arguments) {
     this.arguments = arguments;
@@ -394,6 +402,7 @@ public class Planetiler {
    * @see Downloader
    */
   public Planetiler addGeoPackageSource(String projection, String name, Path defaultPath, String defaultUrl) {
+
     Path path = getPath(name, "geopackage", defaultPath, defaultUrl);
     boolean keepUnzipped = getKeepUnzipped(name);
     return addStage(name, "Process features in " + path,
@@ -531,16 +540,23 @@ public class Planetiler {
    */
   public Planetiler addParquetSource(String name, List<Path> paths, boolean hivePartitioning,
     Function<Map<String, Object>, Object> getId, Function<Map<String, Object>, Object> getLayer) {
-    // TODO handle auto-downloading
-    for (var path : paths) {
-      inputPaths.add(new InputPath(name, path, false));
-    }
-    var separator = Pattern.quote(paths.isEmpty() ? "/" : paths.getFirst().getFileSystem().getSeparator());
-    String prefix = StringUtils.getCommonPrefix(paths.stream().map(Path::toString).toArray(String[]::new))
+    return addParquetSource(name, paths, () -> paths, hivePartitioning, getId, getLayer);
+  }
+
+  private Planetiler addParquetSource(String name, List<Path> base, Supplier<List<Path>> paths,
+    boolean hivePartitioning,
+    Function<Map<String, Object>, Object> getId, Function<Map<String, Object>, Object> getLayer) {
+    boolean freeAfterReading = arguments.getBoolean("free_" + name + "_after_read",
+      "delete " + name + " input file after reading to make space for output (reduces peak disk usage)", false);
+    var separator = Pattern.quote(base.isEmpty() ? "/" : base.getFirst().getFileSystem().getSeparator());
+    String prefix = StringUtils.getCommonPrefix(base.stream().map(Path::toString).toArray(String[]::new))
       .replaceAll(separator + "[^" + separator + "]*$", "");
-    return addStage(name, "Process features in " + (prefix.isEmpty() ? (paths.size() + " files") : prefix),
+    for (var path : base) {
+      inputPaths.add(new InputPath(name, path, freeAfterReading));
+    }
+    return addStage(name, "Process features in " + prefix,
       ifSourceUsed(name, () -> new ParquetReader(name, profile, stats, getId, getLayer, hivePartitioning)
-        .process(paths, featureGroup, config)));
+        .process(paths.get(), featureGroup, config)));
   }
 
   /**
@@ -557,6 +573,41 @@ public class Planetiler {
    */
   public Planetiler addParquetSource(String name, List<Path> paths) {
     return addParquetSource(name, paths, false);
+  }
+
+  /**
+   * Adds a new <a href="https://overturemaps.org/">Overture Maps</a> source that reads from a mirror of overture data
+   * on disk, either fetched using an external tool or downloaded automatically using the stac catalog.
+   */
+  public Planetiler addOvertureSource(String name, String theme, String type, Path rootPath) {
+    Path downloadDir = arguments.file(name + "_path", name + " overture download directory", rootPath);
+    boolean refresh =
+      arguments.getBoolean("refresh_" + name, "Download new version of " + name + " if changed", refreshSources);
+
+    if (downloadSources || refresh) {
+      // Kick off catalog traversal in the background; download() will wait for all futures before running.
+      OvertureStac stac = OvertureStac.create(config);
+      // ensure parent directory exists
+      FileUtils.createDirectory(downloadDir
+        .resolve("theme=" + theme)
+        .resolve("type=" + type));
+      toDownload.add(new ToDownload(name, CompletableFuture.supplyAsync(() -> {
+        List<String> urls = stac.getParquetUrls(theme, type, config.bounds());
+        return urls.stream()
+          .map(url -> Map.entry(url, downloadDir
+            .resolve("theme=" + theme)
+            .resolve("type=" + type)
+            .resolve(url.substring(url.lastIndexOf('/') + 1))))
+          .filter(entry -> refresh || !Files.exists(entry.getValue()))
+          .collect(Collectors.toMap(Map.Entry::getKey, Map.Entry::getValue));
+      }, virtualThreadPoolExecutor)));
+    }
+
+    return addParquetSource(name, List.of(downloadDir.resolve("theme=" + theme).resolve("type=" + type)),
+      () -> Glob.of(downloadDir).resolve("theme=" + theme, "type=" + type, "*.parquet").find(),
+      true,
+      fields -> fields.get("id"),
+      fields1 -> fields1.get("type"));
   }
 
   /**
@@ -628,7 +679,9 @@ public class Planetiler {
           this.defaultLanguages.stream()
         ).toList();
       }
-      translations = Translations.defaultProvider(languages).setShouldTransliterate(transliterate);
+      translations = Translations.defaultProvider(languages)
+        .setShouldTransliterate(transliterate)
+        .setExtraNameTags(config.extraNameTags());
     }
     return translations;
   }
@@ -807,6 +860,15 @@ public class Planetiler {
         });
     }
 
+    // Keep reuse metadata next to feature.db so it survives directory cleanup and is easy to atomically manage.
+    var stringEncoderPath = featureDbPath.resolve(featureDbPath.getFileName() + ".strings");
+    var chunkManifestPath = featureDbPath.resolve(featureDbPath.getFileName() + ".manifest");
+    boolean hasFeatureDb = Files.exists(featureDbPath);
+    boolean hasStringEncoders = Files.exists(stringEncoderPath);
+    boolean hasChunkManifest = Files.exists(chunkManifestPath);
+    boolean hasReusableFeatureDb = hasFeatureDb && hasStringEncoders && hasChunkManifest;
+    boolean reuseExistingFeatureDb = config.reuseFeatureDb() && hasReusableFeatureDb;
+
     LOGGER.info("Building {} profile into {} in these phases:", profile.getClass().getSimpleName(), output.uri());
 
     if (!toDownload.isEmpty()) {
@@ -818,17 +880,32 @@ public class Planetiler {
     }
 
     if (!onlyDownloadSources && !onlyFetchWikidata) {
-      for (Stage stage : stages) {
-        for (String details : stage.details) {
-          LOGGER.info("  {}", details);
+      if (reuseExistingFeatureDb) {
+        LOGGER.info("  reuse: Reusing existing feature DB at {} (skipping source reading stages)", featureDbPath);
+      } else {
+        for (Stage stage : stages) {
+          for (String details : stage.details) {
+            LOGGER.info("  {}", details);
+          }
         }
+        LOGGER.info("  sort: Sort rendered features by tile ID");
       }
-      LOGGER.info("  sort: Sort rendered features by tile ID");
       LOGGER.info("  archive: Encode each tile and write to {}", output);
     }
 
+    if (reuseExistingFeatureDb) {
+      LOGGER.info("Reusing existing feature DB state at {}", featureDbPath);
+    } else {
+      if (config.reuseFeatureDb()) {
+        LOGGER.info("--reuse_featuredb enabled with no previous reusable state; building feature DB for reuse");
+      }
+      FileUtils.delete(featureDbPath);
+    }
     // in case any temp files are left from a previous run...
-    FileUtils.delete(tmpDir, nodeDbPath, featureDbPath, multipolygonPath);
+    FileUtils.delete(nodeDbPath, multipolygonPath);
+    if (!reuseExistingFeatureDb) {
+      FileUtils.delete(tmpDir);
+    }
     FileUtils.createDirectory(tmpDir);
     FileUtils.createParentDirectories(nodeDbPath, featureDbPath, multipolygonPath, output.getLocalBasePath());
 
@@ -838,7 +915,9 @@ public class Planetiler {
     if (fetchOsmTileStats) {
       TopOsmTiles.downloadPrecomputed(config);
     }
-    ensureInputFilesExist();
+    if (!reuseExistingFeatureDb) {
+      ensureInputFilesExist();
+    }
 
     if (fetchWikidata) {
       Wikidata.fetch(osmInputFile(), wikidataNamesFile, config(), profile(), stats(), wikidataMaxAge,
@@ -851,7 +930,7 @@ public class Planetiler {
       return; // exit only if just fetching wikidata or downloading sources
     }
 
-    if (osmInputFile != null) {
+    if (osmInputFile != null && !reuseExistingFeatureDb) {
       checkDiskSpace();
       checkMemory();
       var bounds = config.bounds();
@@ -865,30 +944,40 @@ public class Planetiler {
 
     try (WriteableTileArchive archive = TileArchives.newWriter(output, config)) {
       featureGroup =
-        FeatureGroup.newDiskBackedFeatureGroup(archive.tileOrder(), featureDbPath, profile, config, stats);
+        FeatureGroup.newDiskBackedFeatureGroup(archive.tileOrder(), featureDbPath, profile, config, stats,
+          reuseExistingFeatureDb);
       stats.monitorFile("nodes", nodeDbPath);
       stats.monitorFile("features", featureDbPath);
       stats.monitorFile("multipolygons", multipolygonPath);
       stats.monitorFile("archive", output.getLocalPath(), archive::bytesWritten);
 
-      for (Stage stage : stages) {
-        try {
-          stage.task.run();
-        } catch (Exception e) {
-          throw new PlanetilerException("Error occurred during stage " + stage.id, e);
+      if (reuseExistingFeatureDb) {
+        featureGroup.loadStringEncoders(stringEncoderPath);
+        featureGroup.initFromManifest(chunkManifestPath);
+      } else {
+        for (Stage stage : stages) {
+          try {
+            stage.task.run();
+          } catch (Exception e) {
+            throw new PlanetilerException("Error occurred during stage " + stage.id, e);
+          }
+        }
+
+        LOGGER.info("Deleting node.db to make room for output file");
+        profile.release();
+        for (var inputPath : inputPaths) {
+          if (inputPath.freeAfterReading()) {
+            LOGGER.info("Deleting {} ({}) to make room for output file", inputPath.id, inputPath.path);
+            FileUtils.delete(inputPath.path());
+          }
+        }
+
+        featureGroup.prepare();
+        if (config.reuseFeatureDb()) {
+          featureGroup.saveStringEncoders(stringEncoderPath);
+          featureGroup.saveChunkManifest(chunkManifestPath);
         }
       }
-
-      LOGGER.info("Deleting node.db to make room for output file");
-      profile.release();
-      for (var inputPath : inputPaths) {
-        if (inputPath.freeAfterReading()) {
-          LOGGER.info("Deleting {} ({}) to make room for output file", inputPath.id, inputPath.path);
-          FileUtils.delete(inputPath.path());
-        }
-      }
-
-      featureGroup.prepare();
 
       TileArchiveWriter.writeOutput(featureGroup, archive, archive::bytesWritten, tileArchiveMetadata, layerStatsPath,
         config, stats);
@@ -901,6 +990,7 @@ public class Planetiler {
     stats.printSummary();
     try {
       stats.close();
+      virtualThreadPoolExecutor.close();
     } catch (Exception e) {
       throw new PlanetilerException(e);
     }
@@ -1031,7 +1121,7 @@ public class Planetiler {
     Downloader downloader = Downloader.create(config());
     for (ToDownload toDownload : toDownload) {
       if (profile.caresAboutSource(toDownload.id)) {
-        downloader.add(toDownload.id, toDownload.url, toDownload.path);
+        toDownload.urlToPath.join().forEach((url, path) -> downloader.add(toDownload.id, url, path));
       }
     }
     downloader.run();
@@ -1053,7 +1143,11 @@ public class Planetiler {
     }
   }
 
-  private record ToDownload(String id, String url, Path path) {}
+  private record ToDownload(String id, CompletableFuture<Map<String, Path>> urlToPath) {
+    ToDownload(String id, String url, Path path) {
+      this(id, CompletableFuture.completedFuture(Map.of(url, path)));
+    }
+  }
 
   private record InputPath(String id, Path path, boolean freeAfterReading) {}
 

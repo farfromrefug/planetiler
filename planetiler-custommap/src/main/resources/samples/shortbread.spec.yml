@@ -39,7 +39,7 @@ examples:
 - name: waterway=dock
   input:
     source: osm
-    geometry: polygon
+    geometry: POLYGON ((-0.5 -0.5, 0.5 -0.5, 0.5 0.5, -0.5 0.5, -0.5 -0.5))
     tags:
       waterway: dock
   output:
@@ -48,6 +48,11 @@ examples:
     min_zoom: 10
     tags:
       kind: dock
+      # verified with a naive "projection" and sizes from https://www.thoughtco.com/degree-of-latitude-and-longitude-distance-4070616
+      # 1° lat ~ 110.567km at the equator
+      # 1° lon ~ 111.321km at the equator
+      # => ~12308.429km² = ~12308.429e^6 m² = ~1.2308429e^10 m²
+      way_area: 1.236418893560872E10
 
 - name: waterway=canal linestring
   input:
@@ -55,6 +60,7 @@ examples:
     geometry: line
     tags:
       waterway: canal
+      tunnel: yes
       name: The Canal
       name:en: The Canal (en)
       name:de: The Canal (de)
@@ -64,11 +70,15 @@ examples:
     min_zoom: 9
     tags:
       kind: canal
-  - layer: water_line_labels
+      tunnel: true
+      bridge: false
+  - layer: water_lines_labels
     geometry: line
     min_zoom: 12
     tags:
       kind: canal
+      tunnel: true
+      bridge: false
       name: The Canal
       name_en: The Canal (en)
       name_de: The Canal (de)
@@ -88,14 +98,80 @@ examples:
     min_zoom: 14
     tags:
       kind: stream
-  - layer: water_line_labels
+      tunnel: false
+      bridge: false
+  - layer: water_lines_labels
     geometry: line
     min_zoom: 14
     tags:
       kind: stream
+      tunnel: false
+      bridge: false
       name: The Stream
       name_en: The Stream (en)
       name_de: The Stream (de)
+
+- name: waterway=dam line
+  input:
+    source: osm
+    geometry: line
+    tags:
+      waterway: dam
+  output:
+  - layer: dam_lines
+    geometry: line
+    min_zoom: 12
+    tags:
+      kind: dam
+
+- name: waterway=dam polygon
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      waterway: dam
+  output:
+  - layer: dam_polygons
+    geometry: polygon
+    min_zoom: 12
+    tags:
+      kind: dam
+
+- name: dykes are not dams
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      man_made: dyke
+      embankment: dyke
+      geological: dyke
+  output: []
+
+- name: man_made=pier polygon
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      man_made: pier
+  output:
+  - layer: pier_polygons
+    geometry: polygon
+    min_zoom: 12
+    tags:
+      kind: pier
+
+- name: man_made=pier line
+  input:
+    source: osm
+    geometry: line
+    tags:
+      man_made: pier
+  output:
+  - layer: pier_lines
+    geometry: line
+    min_zoom: 12
+    tags:
+      kind: pier
 
 - name: landuse=grass
   input:
@@ -110,20 +186,7 @@ examples:
     tags:
       kind: grass
 
-- name: natural=wood
-  input:
-    source: osm
-    geometry: polygon
-    tags:
-      natural: wood
-  output:
-  - layer: land
-    geometry: polygon
-    min_zoom: 7
-    tags:
-      kind: wood
-
-- name: landuse=forest override kind to wood
+- name: landuse=forest
   input:
     source: osm
     geometry: polygon
@@ -134,7 +197,20 @@ examples:
     geometry: polygon
     min_zoom: 7
     tags:
-      kind: wood
+      kind: forest
+
+- name: natural=wood override kind to forest
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      natural: wood
+  output:
+  - layer: land
+    geometry: polygon
+    min_zoom: 7
+    tags:
+      kind: forest
 
 - name: amenity=parking
   input:
@@ -182,7 +258,7 @@ examples:
     geometry: point
     min_zoom: 14
     tags:
-      number: 123
+      housenumber: 123
 
 - name: address point with house name
   input:
@@ -195,7 +271,7 @@ examples:
     geometry: point
     min_zoom: 14
     tags:
-      name: the 123 house
+      housename: the 123 house
 
 - name: B27 highway
   input:
@@ -238,6 +314,7 @@ examples:
       ref: B 27
       ref_rows: 1
       ref_cols: 4
+      tunnel: false
 
 - name: B39A link
   input:
@@ -271,15 +348,18 @@ examples:
       rail: false
       surface: asphalt
       tunnel: false
+      oneway: true
+      oneway_reverse: false
   - layer: street_labels
     geometry: line
     min_zoom: 13
     allow_extra_tags: false
     tags:
-      kind: primary
+      kind: primary_link
       ref: "B 39\nB 39A"
       ref_rows: 2
       ref_cols: 5
+      tunnel: false
 
 - name: rail with service
   input:
@@ -301,6 +381,8 @@ examples:
       rail: true
       tunnel: false
       service: service_value
+      oneway: false
+      oneway_reverse: false
 
 - name: narrow_gauge without service
   input:
@@ -319,6 +401,8 @@ examples:
       link: false
       rail: true
       tunnel: false
+      oneway: false
+      oneway_reverse: false
 
 - name: 'track with grade'
   input:
@@ -378,22 +462,7 @@ examples:
     allow_extra_tags: false
     tags:
       kind: motorway
-
-- name: 'rail attributes drop below z11'
-  input:
-    source: osm
-    geometry: line
-    tags:
-      railway: rail
-      service: primary
-  output:
-    layer: streets
-    geometry: line
-    min_zoom: 8
-    at_zoom: 10
-    allow_extra_tags: false
-    tags:
-      kind: rail
+      rail: false
 
 - name: 'path bridge'
   input:
@@ -406,9 +475,14 @@ examples:
     layer: streets
     geometry: line
     min_zoom: 13
+    allow_extra_tags: false
     tags:
-      bridge: true
       kind: path
+      bridge: true
+      link: false
+      oneway: false
+      oneway_reverse: false
+      rail: false
       tunnel: false
 
 - name: 'pedestrian tunnel'
@@ -421,10 +495,16 @@ examples:
   output:
     layer: streets
     geometry: line
+    min_zoom: 13
+    allow_extra_tags: false
     tags:
-      bridge: false
       kind: pedestrian
       tunnel: true
+      bridge: false
+      link: false
+      oneway: false
+      oneway_reverse: false
+      rail: false
 
 - name: 'horse'
   input:
@@ -436,9 +516,17 @@ examples:
   output:
     layer: streets
     geometry: line
+    min_zoom: 13
+    allow_extra_tags: false
     tags:
       kind: track
       horse: definitely
+      tunnel: false
+      bridge: false
+      link: false
+      oneway: false
+      oneway_reverse: false
+      rail: false
 
 - name: 'bicycle'
   input:
@@ -450,9 +538,17 @@ examples:
   output:
     layer: streets
     geometry: line
+    min_zoom: 13
+    allow_extra_tags: false
     tags:
       kind: track
       bicycle: definitely
+      tunnel: false
+      bridge: false
+      link: false
+      oneway: false
+      oneway_reverse: false
+      rail: false
 
 - name: 'aeroway=taxiway'
   input:
@@ -462,11 +558,28 @@ examples:
       aeroway: taxiway
       ref: N
   output:
-    layer: streets
-    geometry: line
-    min_zoom: 13
-    tags:
-      kind: taxiway
+    - layer: streets
+      geometry: line
+      allow_extra_tags: false
+      min_zoom: 13
+      tags:
+        kind: taxiway
+        bridge: false
+        tunnel: false
+        link: false
+        rail: false
+        oneway: false
+        oneway_reverse: false
+    - layer: street_labels
+      geometry: line
+      allow_extra_tags: false
+      min_zoom: 13
+      tags:
+        kind: taxiway
+        ref: N
+        ref_rows: 1
+        ref_cols: 1
+        tunnel: false
 
 - name: 'aeroway=runway'
   input:
@@ -477,12 +590,29 @@ examples:
       ref: 07/25
       surface: concrete:lanes
   output:
-    layer: streets
+  - layer: streets
     geometry: line
     min_zoom: 11
+    allow_extra_tags: false
     tags:
       kind: runway
       surface: concrete:lanes
+      bridge: false
+      tunnel: false
+      link: false
+      rail: false
+      oneway: false
+      oneway_reverse: false
+  - layer: street_labels
+    geometry: line
+    min_zoom: 11
+    allow_extra_tags: false
+    tags:
+      kind: runway
+      ref: 07/25
+      ref_rows: 1
+      ref_cols: 5
+      tunnel: false
 
 - name: 'pedestrian polygon'
   input:
@@ -506,7 +636,7 @@ examples:
       rail: false
       surface: paving_stones
       tunnel: false
-  - layer: street_polygons_labels
+  - layer: streets_polygons_labels
     geometry: point
     min_zoom: 14
     allow_extra_tags: false
@@ -515,7 +645,7 @@ examples:
       name: 'Name'
       name_en: 'Name (en)'
 
-- name: 'ignore pedestrian polygon without area=yes'
+- name: 'pedestrian polygon without area=yes gets also interpreted as an polygon'
   input:
     source: osm
     geometry: polygon
@@ -523,7 +653,24 @@ examples:
       highway: pedestrian
       name: 'Name'
       name:en: 'Name (en)'
-  output: [ ]
+  output:
+  - layer: street_polygons
+    geometry: polygon
+    allow_extra_tags: false
+    min_zoom: 14
+    tags:
+      kind: pedestrian
+      bridge: false
+      tunnel: false
+      rail: false
+  - layer: streets_polygons_labels
+    geometry: point
+    allow_extra_tags: false
+    min_zoom: 14
+    tags:
+      kind: pedestrian
+      name: 'Name'
+      name_en: 'Name (en)'
 
 - name: 'pedestrian polygon bridge'
   input:
@@ -536,10 +683,13 @@ examples:
   output:
     layer: street_polygons
     geometry: polygon
+    allow_extra_tags: false
     min_zoom: 14
     tags:
       kind: service
       bridge: true
+      rail: false
+      tunnel: false
 
 - name: 'motorway junction'
   input:
@@ -552,11 +702,25 @@ examples:
   output:
     layer: street_labels_points
     geometry: point
+    allow_extra_tags: false
     min_zoom: 12
     tags:
       kind: motorway_junction
       name: 'Name'
       ref: 'ref'
+
+- name: 'bridge as polygon'
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      man_made: bridge
+  output:
+    layer: bridges
+    geometry: polygon
+    min_zoom: 12
+    tags:
+      kind: bridge
 
 - name: 'gondola'
   input:
@@ -571,6 +735,185 @@ examples:
     min_zoom: 12
     tags:
       kind: gondola
+
+- name: ferry without motor at z12
+  input:
+    source: osm
+    geometry: line
+    tags:
+      route: ferry
+      motor_vehicle: no
+      name: Name
+      name:en: 'Name (en)'
+      name:de: 'Name (de)'
+  output:
+    layer: ferries
+    geometry: line
+    min_zoom: 12
+    at_zoom: 12
+    tags:
+      kind: ferry
+      name: Name
+      name_en: 'Name (en)'
+      name_de: 'Name (de)'
+
+- name: ferry without motor at z11
+  input:
+    source: osm
+    geometry: line
+    tags:
+      route: ferry
+      motor_vehicle: no
+      name: Name
+  output:
+    at_zoom: 11
+
+- name: ferry with motor at z11
+  input:
+    source: osm
+    geometry: line
+    tags:
+      route: ferry
+      name: Name
+  output:
+    layer: ferries
+    geometry: line
+    min_zoom: 10
+    at_zoom: 11
+    tags:
+      kind: ferry
+      name: Name
+
+- name: 'pois can have names and adresses. This makes them not show up on the addresses layer'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      office: diplomatic
+      name: 'Name'
+      addr:housename: 'Housename'
+      addr:housenumber: 'Housenumber'
+  output:
+    - layer: pois
+      geometry: point
+      allow_extra_tags: false
+      tags:
+        office: diplomatic
+        name: 'Name'
+        housename: 'Housename'
+        housenumber: 'Housenumber'
+
+- name: 'arts_centre poi with invalid tag (man_made=beauty) is not emmitted as such'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      amenity: arts_centre
+      man_made: beauty
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      amenity: arts_centre
+
+- name: 'place_of_worship poi'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      amenity: place_of_worship
+      religion: some_religion
+      denomination: some_denomination
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      amenity: place_of_worship
+      religion: some_religion
+      denomination: some_denomination
+
+- name: 'recycling poi with invalid tag does not cause this to be emmitted'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      amenity: recycling
+      recycling:glass_bottles: yes
+      recycling:paper: yes
+      recycling:clothes: yes
+      recycling:scrap_metal: yes
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      amenity: recycling
+      recycling:glass_bottles: true
+      recycling:paper: true
+      recycling:clothes: true
+      recycling:scrap_metal: true
+
+- name: 'recycling poi without recycling tags set'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      amenity: recycling
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      amenity: recycling
+      recycling:glass_bottles: false
+      recycling:paper: false
+      recycling:clothes: false
+      recycling:scrap_metal: false
+
+- name: 'poi bank without atm'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      atm: yes
+      amenity: bank
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      atm: true
+      amenity: bank
+
+- name: 'poi bank with atm'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      atm: no
+      amenity: bank
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      atm: false
+      amenity: bank
+
+- name: 'poi on polygon'
+  input:
+    source: osm
+    geometry: polygon
+    tags:
+      historic: battlefield
+  output:
+    layer: pois
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      historic: battlefield
 
 - name: 'train station point'
   input:
@@ -604,6 +947,34 @@ examples:
       name: 'Name'
       iata: eye eight a
 
+- name: 'aerialway=station'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      aerialway: station
+  output:
+    layer: public_transport
+    min_zoom: 13
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      kind: aerialway_station
+
+- name: 'railway=station'
+  input:
+    source: osm
+    geometry: point
+    tags:
+      railway: station
+  output:
+    layer: public_transport
+    min_zoom: 13
+    geometry: point
+    allow_extra_tags: false
+    tags:
+      kind: station
+
 - name: 'unnamed hamlet'
   input:
     source: osm
@@ -612,89 +983,105 @@ examples:
       place: hamlet
   output: [ ]
 
+- name: 'non administrative boundarys are not boundary labels'
+  input:
+    source: osm
+    geometry: POLYGON ((-0.5 -0.5, 0.5 -0.5, 0.5 0.5, -0.5 0.5, -0.5 -0.5))
+    tags:
+      admin_level: 4
+      government: transportation
+      short_name: DMV
+      name: New York State Department of Motor Vehicles
+  output: []
+
 - name: 'boundary_labels'
   input:
-    source: admin_points
-    geometry: point
+    source: osm
+    geometry: POLYGON ((-0.5 -0.5, 0.5 -0.5, 0.5 0.5, -0.5 0.5, -0.5 -0.5))
     tags:
-      WAY_AREA: 10.5
-      ADMIN_LEVEL: 2
-      NAME: Name
-      NAME_EN: ''
-      NAME_DE: Name (de)
+      admin_level: 2
+      boundary: administrative
+      name: Name
+      name:en: ''
+      name:de: Name (de)
   output:
     layer: boundary_labels
     geometry: point
     allow_extra_tags: false
     min_zoom: 5
     tags:
-      way_area: 10.5
       admin_level: 2
       name: Name
       name_de: Name (de)
+      # verified with a naive "projection" and sizes from https://www.thoughtco.com/degree-of-latitude-and-longitude-distance-4070616
+      # 1° lat ~ 110.567km at the equator
+      # 1° lon ~ 111.321km at the equator
+        # => ~12308.429km² = ~1230842,9 ha
+        # similar enough to ~1236418 ha adjusting for projection
+      way_area: 1236418.8935608722
 
-- name: 'boundary_labels z4'
+- name: 'boundary_labels admin_level=2 z4'
   input:
-    source: admin_points
-    geometry: point
+    source: osm
+    geometry: POLYGON ((-1.5 -1.5, 1.5 -1.5, 1.5 1.5, -1.5 1.5, -1.5 -1.5))
     tags:
-      WAY_AREA: 1e7
-      ADMIN_LEVEL: 2
-      NAME: name
+      admin_level: 2
+      boundary: administrative
+      name: Name
   output:
     layer: boundary_labels
     geometry: point
     min_zoom: 4
     tags:
-      way_area: 1e7
+      way_area: 1.112664016653054E7
       admin_level: 2
 
-- name: 'boundary_labels z3'
+- name: 'boundary_labels admin_level=2 z3'
   input:
-    source: admin_points
-    geometry: point
+    source: osm
+    geometry: POLYGON ((-4 -4, 4 -4, 4 4, -4 4, -4 -4))
     tags:
-      WAY_AREA: 7e7
-      ADMIN_LEVEL: 2
-      NAME: name
+      admin_level: 2
+      boundary: administrative
+      name: Name
   output:
     layer: boundary_labels
     geometry: point
     min_zoom: 3
     tags:
-      way_area: 7e7
+      way_area: 7.906754940857396E7
       admin_level: 2
 
-- name: 'boundary_labels z2'
+- name: 'boundary_labels admin_level=2 z2'
   input:
-    source: admin_points
-    geometry: point
+    source: osm
+    geometry: POLYGON ((-10 -10, 10 -10, 10 10, -10 10, -10 -10))
     tags:
-      WAY_AREA: 2e8
-      ADMIN_LEVEL: '2'
-      NAME: name
+      admin_level: 2
+      boundary: administrative
+      name: Name
   output:
     layer: boundary_labels
     geometry: point
     min_zoom: 2
     tags:
-      way_area: 2e8
+      way_area: 4.920667262278699E8
       admin_level: 2
 
 - name: 'boundary_labels admin_level=4 z3'
   input:
-    source: admin_points
-    geometry: point
+    source: osm
+    geometry: POLYGON ((-10 -10, 10 -10, 10 10, -10 10, -10 -10))
     tags:
-      WAY_AREA: 7e7
-      ADMIN_LEVEL: 4
-      NAME: name
+      admin_level: 4
+      boundary: administrative
+      name: Name
   output:
     layer: boundary_labels
     geometry: point
     min_zoom: 3
     tags:
-      way_area: 7e7
+      way_area: 4.920667262278699E8
       admin_level: 4
 
 - name: 'country boundary'
@@ -714,6 +1101,26 @@ examples:
     tags:
       maritime: true
       admin_level: 2
+      disputed: false
+
+- name: 'country coastline'
+  input:
+    source: osm
+    geometry: line
+    # TODO from relation
+    tags:
+      boundary: administrative
+      admin_level: '2'
+      natural: coastline
+  output:
+    layer: boundaries
+    geometry: line
+    min_zoom: 0
+    min_size: 0
+    tags:
+      maritime: true
+      admin_level: 2
+      disputed: false
 
 - name: 'state boundary'
   input:
@@ -731,6 +1138,7 @@ examples:
     tags:
       maritime: false
       admin_level: 4
+      disputed: false
 
 # TODO take min admin level
 

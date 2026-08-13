@@ -5,8 +5,16 @@ import com.onthegomap.planetiler.config.PlanetilerConfig;
 import com.onthegomap.planetiler.stats.Stats;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.regex.Pattern;
 import java.util.stream.Stream;
+import org.geotools.api.referencing.FactoryException;
+import org.geotools.api.referencing.crs.CoordinateReferenceSystem;
+import org.geotools.api.referencing.operation.MathTransform;
+import org.geotools.referencing.CRS;
+import org.geotools.referencing.operation.transform.AffineTransform2D;
+import org.geotools.referencing.operation.transform.ConcatenatedTransform;
 import org.locationtech.jts.algorithm.Area;
+import org.locationtech.jts.algorithm.Orientation;
 import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.CoordinateSequence;
 import org.locationtech.jts.geom.CoordinateXY;
@@ -308,6 +316,49 @@ public class GeoUtils {
     return snapAndFixPolygon(geom, TILE_PRECISION, stats, stage);
   }
 
+  private static class OrientationFixer extends GeometryTransformer {
+    Geometry lastPolygon = null;
+
+    @Override
+    protected Geometry transformLinearRing(LinearRing geom, Geometry parent) {
+      // GeometryTransformer processes a polygon's exterior then interior rings
+      boolean isOuter = lastPolygon != parent;
+      lastPolygon = parent;
+      return Orientation.isCCW(geom.getCoordinateSequence()) == isOuter ? geom.reverse() : geom;
+    }
+  }
+
+  // Use this instead of GeometryPrecisionReducer.reducePointwise since it doesn't remove duplicate points
+  private static class PointwiseRounder extends GeometryTransformer {
+
+    private final PrecisionModel precisionModel;
+
+    PointwiseRounder(PrecisionModel precisionModel) {
+      this.precisionModel = precisionModel;
+    }
+
+    @Override
+    protected CoordinateSequence transformCoordinates(CoordinateSequence coordinates, Geometry parent) {
+      if (coordinates.size() < 4) {
+        return null;
+      }
+
+      MutableCoordinateSequence result = new MutableCoordinateSequence(coordinates.size());
+      double lastX = Double.MIN_VALUE;
+      double lastY = Double.MIN_VALUE;
+      for (int i = 0; i < coordinates.size(); i++) {
+        double x = precisionModel.makePrecise(coordinates.getX(i));
+        double y = precisionModel.makePrecise(coordinates.getY(i));
+        if (x != lastX || y != lastY) {
+          result.forceAddPoint(x, y);
+        }
+        lastX = x;
+        lastY = y;
+      }
+      return result.size() < 4 ? null : result;
+    }
+  }
+
   /**
    * Returns a copy of {@code geom} with coordinates rounded to {@code #tilePrecision} and fixes any polygon
    * self-intersections or overlaps that may have caused.
@@ -317,6 +368,10 @@ public class GeoUtils {
   public static Geometry snapAndFixPolygon(Geometry geom, PrecisionModel tilePrecision, Stats stats, String stage)
     throws GeometryException {
     try {
+      Geometry naiveSnap = new PointwiseRounder(tilePrecision).transform(geom);
+      if (naiveSnap.isValid()) {
+        return new OrientationFixer().transform(naiveSnap);
+      }
       if (!geom.isValid()) {
         geom = fixPolygon(geom);
         stats.dataError(stage + "_snap_fix_input");
@@ -661,6 +716,29 @@ public class GeoUtils {
     };
   }
 
+
+  /** Create a transform that swaps the X/Y coordinates. */
+  public static MathTransform swapXYTransform() {
+    return new AffineTransform2D(0, 1, 1, 0, 0, 0);
+  }
+
+  /**
+   * Creates a transform that maps coordinates from {@code source} to {@code dest} CRS. If {@code source} axis ordering
+   * does not match {@code longitudeFirst} then it force-swaps x/y coordinates first.
+   */
+  public static MathTransform findMathTransform(CoordinateReferenceSystem source, CoordinateReferenceSystem dest,
+    Boolean forceLongitudeFirst)
+    throws FactoryException {
+    var mathTransform = CRS.findMathTransform(source, dest, true);
+    if (forceLongitudeFirst != null) {
+      boolean sourceLonFirst = CRS.getAxisOrder(source) == CRS.AxisOrder.EAST_NORTH;
+      if (sourceLonFirst != forceLongitudeFirst) {
+        mathTransform = ConcatenatedTransform.create(swapXYTransform(), mathTransform);
+      }
+    }
+    return mathTransform;
+  }
+
   /** Helper class to sort polygons by area of their outer shell. */
   private record PolyAndArea(Polygon poly, double area) implements Comparable<PolyAndArea> {
 
@@ -672,5 +750,42 @@ public class GeoUtils {
     public int compareTo(PolyAndArea o) {
       return -Double.compare(area, o.area);
     }
+  }
+
+  public static String envelopeToString(Envelope envelope) {
+    return envelope == null ? "null" :
+      ("Envelope(" + envelope.getMinX() + ',' + envelope.getMinY() + ',' + envelope.getMaxX() + ',' +
+        envelope.getMaxY() + ')');
+  }
+
+  private static final Pattern COORDINATE_ORDER_SUFFIX = Pattern.compile(":(lat|lon)_first$");
+
+  /**
+   * Decodes a {@link CoordinateReferenceSystem} from an {@code EPSG:1234} code or WKT. Add {@code :lon_first} code to
+   * the suffixt to indicate the source coordinates are lon, lat and not lat, lon. lon_first defaults to the value from
+   * {@code base} if specified;
+   */
+  public static CoordinateReferenceSystem decodeCRS(String crs, CoordinateReferenceSystem base)
+    throws FactoryException {
+    try {
+      boolean longitudeFirst = base != null && CRS.getAxisOrder(base) == CRS.AxisOrder.EAST_NORTH;
+      var matcher = COORDINATE_ORDER_SUFFIX.matcher(crs);
+      if (matcher.find()) {
+        longitudeFirst = "lon".equals(matcher.group(1));
+        crs = matcher.replaceFirst("");
+      }
+      return CRS.decode(crs, longitudeFirst);
+    } catch (FactoryException e) {
+      return CRS.parseWKT(crs);
+    }
+  }
+
+  /**
+   * Decodes a {@link CoordinateReferenceSystem} from an {@code EPSG:1234} code or WKT. Add {@code :lon_first} code to
+   * the suffixt to indicate the source coordinates are lon, lat and not lat, lon.
+   */
+  public static CoordinateReferenceSystem decodeCRS(String crs)
+    throws FactoryException {
+    return decodeCRS(crs, null);
   }
 }
