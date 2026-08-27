@@ -544,7 +544,6 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
     private ZoomFunction<Number> minPixelSize = null;
 
     private double defaultPixelTolerance = config.simplifyToleranceBelowMaxZoom();
-    private double defaultPixelToleranceFactor = 1.0;
     private double pixelToleranceAtMaxZoom = config.simplifyToleranceAtMaxZoom();
     private ZoomFunction<Number> pixelTolerance = null;
 
@@ -844,15 +843,6 @@ public class FeatureCollector implements Iterable<FeatureCollector.Feature> {
      */
     public Feature setPixelTolerance(double tolerance) {
       this.defaultPixelTolerance = tolerance;
-      return this;
-    }
-
-
-    /**
-     * multiply factor applied to defaultPixelTolerance
-     */
-    public Feature setPixelToleranceFactor(double factor) {
-      this.defaultPixelToleranceFactor = factor;
       return this;
     }
 
